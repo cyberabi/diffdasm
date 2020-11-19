@@ -1,0 +1,1521 @@
+/*
+ * stats6809.c
+ *
+ *  Created on: Nov 22, 2019
+ *      Author: cburke
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <string.h>
+
+#include "os9stuff.h"
+#include "memoryfile.h"
+#include "memorymap.h"
+#include "stats6809.h"
+#include "statsOS9.h"
+
+extern int source; // Non-zero to disassemble in source format
+extern int f9info; // Non-zero to output only code / data map info for f9dasm
+extern int _debug; // Non-zero to print debug information
+
+Instruction page00[] =
+{
+	// 00
+	{"NEG",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"OIM",NULL,DIRECT,3,HAS_6309},
+	{"AIM",NULL,DIRECT,3,HAS_6309},
+	{"COM",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"LSR",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"EIM",NULL,DIRECT,3,HAS_6309},
+	{"ROR",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ASR",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ASL",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ROL",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"DEC",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"TIM",NULL,DIRECT,3,HAS_6309},
+	{"INC",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"TST",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"JMP",NULL,DIRECT,2,(LEAF|HAS_6809|HAS_6309)},
+	{"CLR",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	// 10
+	{"",NULL,PREBYTE10,1,(HAS_6809|HAS_6309)},
+	{"",NULL,PREBYTE11,1,(HAS_6809|HAS_6309)},
+	{"NOP",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"SYNC",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"SEXW",NULL,INHERENT,1,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LBRA","BBRA",REL_16,3,(TRANSFER|LEAF|HAS_6809|HAS_6309)},
+	{"LBSR","BBSR",REL_16,3,(TRANSFER|HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"DAA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ORCC",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ANDCC",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"SEX",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"EXG",NULL,REGISTER,2,(HAS_6809|HAS_6309)},
+	{"TFR",NULL,REGISTER,2,(HAS_6809|HAS_6309)},
+	// 20
+	{"BRA","BBRA",REL_8,2,(TRANSFER|LEAF|HAS_6809|HAS_6309)},
+	{"BRN","BBRN",REL_8,2,(HAS_6809|HAS_6309)}, // Not TRANSFER because, SKIP1
+	{"BHI","BBHI",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BLS","BBLS",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BCC","BBCC",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BCS","BBCS",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BNE","BBNE",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BEQ","BBEQ",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BVC",",BVC",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BVS","BBVS",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BPL","BBPL",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BMI","BBMI",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BGE","BBGE",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BLT","BBLT",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BGT","BBGE",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"BLE","BBLE",REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	// 30
+	{"LEAX",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LEAY",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LEAS",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LEAU",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"PSHS",NULL,REG_PUSH_S,2,(HAS_6809|HAS_6309)},
+	{"PULS",NULL,REG_PULL_S,2,(HAS_6809|HAS_6309)},
+	{"PSHU",NULL,REG_PUSH_U,2,(HAS_6809|HAS_6309)},
+	{"PULU",NULL,REG_PULL_U,2,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"RTS",NULL,INHERENT,1,(LEAF|HAS_6809|HAS_6309)},
+	{"ABX",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"RTI",NULL,INHERENT,1,(LEAF|HAS_6809|HAS_6309)},
+	{"CWAI",NULL,INHERENT,2,(HAS_6809|HAS_6309)},
+	{"MUL",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SWI",NULL,INHERENT,1,(TRANSFER|HAS_6809|HAS_6309)},
+	// 40
+	{"NEGA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"COMA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"LSRA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"RORA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ASRA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ASLA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ROLA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"DECA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"INCA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"TSTA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CLRA",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	// 50
+	{"NEGB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"COMB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"LSRB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"RORB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ASRB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ALSB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"ROLB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"DECB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"INCB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"TSTB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CLRB",NULL,INHERENT,1,(HAS_6809|HAS_6309)},
+	// 60
+	{"NEG",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"OIM",NULL,INDEXED,3,HAS_6309},
+	{"AIM",NULL,INDEXED,3,HAS_6309},
+	{"COM",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LSR",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"EIM",NULL,INDEXED,3,HAS_6309},
+	{"ROR",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ASR",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ASL",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ROL",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"DEC",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"TIM",NULL,INDEXED,3,HAS_6309},
+	{"INC",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"TST",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"JMP",NULL,INDEXED,2,(LEAF|HAS_6809|HAS_6309)},
+	{"CLR",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	// 70
+	{"NEG",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"OIM",NULL,EXTENDED,4,HAS_6309},
+	{"AIM",NULL,EXTENDED,4,HAS_6309},
+	{"COM",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"LSR",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"EIM",NULL,EXTENDED,4,HAS_6309},
+	{"ROR",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ASR",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ASL",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ROL",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"DEC",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"TIM",NULL,EXTENDED,4,HAS_6309},
+	{"INC",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"TST",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"JMP",NULL,EXTENDED,3,(LEAF|HAS_6809|HAS_6309)},
+	{"CLR",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	// 80
+	{"SUBA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"CMPA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"SBCA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"SUBD",NULL,IMMED_8,3,(HAS_6809|HAS_6309)},
+	{"ANDA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"BITA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"LDA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"EORA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ADCA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ORA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ADDA",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"CMPX",NULL,IMMED_16,3,(HAS_6809|HAS_6309)},
+	{"BSR",NULL,REL_8,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LDX",NULL,IMMED_16,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	// 90
+	{"SUBA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"CMPA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"SBCA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"SUBD",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ANDA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"BITA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"LDA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"STA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"EORA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ADCA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ORA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ADDA",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"CMPX",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"JSR",NULL,DIRECT,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LDX",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"STX",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"SUBA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"CMPA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"SBCA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"SUBD",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ANDA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"BITA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LDA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"STA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"EORA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ADCA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ORA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ADDA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"CMPX",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"JSR",NULL,INDEXED,2,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LDX",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"STX",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"SUBA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"CMPA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"SBCA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"SUBD",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ANDA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"BITA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"LDA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"STA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"EORA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ADCA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ORA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ADDA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"CMPX",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"JSR",NULL,EXTENDED,3,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LDX",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"STX",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"SUBB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"CMPB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"SBCB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ADDD",NULL,IMMED_16,3,(HAS_6809|HAS_6309)},
+	{"ANDB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"BITB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"LDB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"EORB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ADCB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ORB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"ADDB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
+	{"LDD",NULL,IMMED_16,3,(HAS_6809|HAS_6309)},
+	{"LDQ",NULL,IMMED_32,5,HAS_6309},
+	{"LDU",NULL,IMMED_16,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SUBB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"CMPB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"SBCB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ADDD",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ANDB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"BITB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"LDB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"STB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"EORB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ADCB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ORB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"ADDB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"LDD",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"STD",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"LDU",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"STU",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+	{"SUBB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"CMPB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"SBCB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ADDD",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ANDB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"BITB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LDB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"STB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"EORB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ADCB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ORB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"ADDB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LDD",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"STD",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"LDU",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"STU",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+	{"SUBB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"CMPB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"SBCB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ADDD",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ANDB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"BITB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"LDB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"STB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"EORB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ADCB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ORB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"ADDB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"LDD",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"STD",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"LDU",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+	{"STU",NULL,EXTENDED,3,(HAS_6809|HAS_6309)}
+};
+
+Instruction page10[] =
+{
+	// 00
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	// 10
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	// 20
+	{"",NULL,INVALID,1,NEITHER},
+	{"LBRN","BBRN",REL_16,4,(HAS_6809|HAS_6309)}, // Not TRANSFER because SKIP2
+	{"LBHI","BBHI",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBLS","BBLS",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBCC","BBCC",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBCS","BBCS",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBNE","BBNE",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBEQ","BBEQ",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBVC","BBVC",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBVS","BBVS",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBPL","BBPL",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBMI","BBMI",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBGE","BBGE",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBLT","BBLT",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBGT","BBGT",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	{"LBLE","BBLE",REL_16,4,(TRANSFER|HAS_6809|HAS_6309)},
+	// 30
+	{"ADDR",NULL,REGISTER,3,HAS_6309},
+	{"ADCR",NULL,REGISTER,3,HAS_6309},
+	{"SUBR",NULL,REGISTER,3,HAS_6309},
+	{"SBCR",NULL,REGISTER,3,HAS_6309},
+	{"ANDR",NULL,REGISTER,3,HAS_6309},
+	{"ORR",NULL,REGISTER,3,HAS_6309},
+	{"EORR",NULL,REGISTER,3,HAS_6309},
+	{"CMPR",NULL,REGISTER,3,HAS_6309},
+	{"PSHSW",NULL,INHERENT,2,HAS_6309},
+	{"PULSW",NULL,INHERENT,2,HAS_6309},
+	{"PSHUW",NULL,INHERENT,2,HAS_6309},
+	{"PULUW",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SWI2",NULL,INHERENT,2,(TRANSFER|HAS_6809|HAS_6309)}, // For OS9, 3 bytes
+	{"NEGD",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"COMD",NULL,INHERENT,2,HAS_6309},
+	{"LSRD",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"RORD",NULL,INHERENT,2,HAS_6309},
+	{"ASRD",NULL,INHERENT,2,HAS_6309},
+	{"ASLD",NULL,INHERENT,2,HAS_6309},
+	{"ROLD",NULL,INHERENT,2,HAS_6309},
+	{"DECD",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"INCD",NULL,INHERENT,2,HAS_6309},
+	{"TSTD",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CLRD",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"COMW",NULL,INHERENT,2,HAS_6309},
+	{"LSRW",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"RORW",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ROLW",NULL,INHERENT,2,HAS_6309},
+	{"DECW",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"INCW",NULL,INHERENT,2,HAS_6309},
+	{"TSTW",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CLRW",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SUBW",NULL,IMMED_16,4,HAS_6309},
+	{"CMPW",NULL,IMMED_16,4,HAS_6309},
+	{"SBCD",NULL,IMMED_16,4,HAS_6309},
+	{"CMPD",NULL,IMMED_16,4,(HAS_6809|HAS_6309)},
+	{"ANDD",NULL,IMMED_16,4,HAS_6309},
+	{"BITD",NULL,IMMED_16,4,HAS_6309},
+	{"LDW",NULL,IMMED_16,4,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"EORD",NULL,IMMED_16,4,HAS_6309},
+	{"ADCD",NULL,IMMED_16,4,HAS_6309},
+	{"ORD",NULL,IMMED_16,4,HAS_6309},
+	{"ADDW",NULL,IMMED_16,4,HAS_6309},
+	{"CMPY",NULL,IMMED_16,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDY",NULL,IMMED_16,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SUBW",NULL,DIRECT,3,HAS_6309},
+	{"CMPW",NULL,DIRECT,3,HAS_6309},
+	{"SBCD",NULL,DIRECT,3,HAS_6309},
+	{"CMPD",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"ANDD",NULL,DIRECT,3,HAS_6309},
+	{"BITD",NULL,DIRECT,3,HAS_6309},
+	{"LDW",NULL,DIRECT,3,HAS_6309},
+	{"STW",NULL,DIRECT,3,HAS_6309},
+	{"EORD",NULL,DIRECT,3,HAS_6309},
+	{"ADCD",NULL,DIRECT,3,HAS_6309},
+	{"ORD",NULL,DIRECT,3,HAS_6309},
+	{"ADDW",NULL,DIRECT,3,HAS_6309},
+	{"CMPY",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDY",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"STY",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"SUBW",NULL,WINDEXED,3,HAS_6309},
+	{"CMPW",NULL,WINDEXED,3,HAS_6309},
+	{"SBCD",NULL,INDEXED,3,HAS_6309},
+	{"CMPD",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"ANDD",NULL,INDEXED,3,HAS_6309},
+	{"BITD",NULL,INDEXED,3,HAS_6309},
+	{"LDW",NULL,WINDEXED,3,HAS_6309},
+	{"STW",NULL,WINDEXED,3,HAS_6309},
+	{"EORD",NULL,INDEXED,3,HAS_6309},
+	{"ADCD",NULL,INDEXED,3,HAS_6309},
+	{"ORD",NULL,INDEXED,3,HAS_6309},
+	{"ADDW",NULL,WINDEXED,3,HAS_6309},
+	{"CMPY",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDY",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"STY",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"SUBW",NULL,EXTENDED,4,HAS_6309},
+	{"CMPW",NULL,EXTENDED,4,HAS_6309},
+	{"SBCD",NULL,EXTENDED,4,HAS_6309},
+	{"CMPD",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"ANDD",NULL,EXTENDED,4,HAS_6309},
+	{"BITD",NULL,EXTENDED,4,HAS_6309},
+	{"LDW",NULL,EXTENDED,4,HAS_6309},
+	{"STW",NULL,EXTENDED,4,HAS_6309},
+	{"EORD",NULL,EXTENDED,4,HAS_6309},
+	{"ADCD",NULL,EXTENDED,4,HAS_6309},
+	{"ORD",NULL,EXTENDED,4,HAS_6309},
+	{"ADDW",NULL,EXTENDED,4,HAS_6309},
+	{"CMPY",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDY",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"STY",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDS",NULL,IMMED_16,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDQ",NULL,DIRECT,3,HAS_6309},
+	{"STQ",NULL,DIRECT,3,HAS_6309},
+	{"LDS",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"STS",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDQ",NULL,INDEXED,3,HAS_6309},
+	{"STQ",NULL,INDEXED,3,HAS_6309},
+	{"LDS",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"STS",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDQ",NULL,EXTENDED,4,HAS_6309},
+	{"STQ",NULL,EXTENDED,4,HAS_6309},
+	{"LDS",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"STS",NULL,EXTENDED,4,(HAS_6809|HAS_6309)}
+};
+
+Instruction page11[] =
+{
+// 0x
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+// 1x
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+// 2x
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+// 3x
+	{"BAND",NULL,SINGLE_BIT,4,HAS_6309},
+	{"BIAND",NULL,SINGLE_BIT,4,HAS_6309},
+	{"BOR",NULL,SINGLE_BIT,4,HAS_6309},
+	{"BIOR",NULL,SINGLE_BIT,4,HAS_6309},
+	{"BEOR",NULL,SINGLE_BIT,4,HAS_6309},
+	{"BIEOR",NULL,SINGLE_BIT,4,HAS_6309},
+	{"LDBT",NULL,SINGLE_BIT,4,HAS_6309},
+	{"STBT",NULL,SINGLE_BIT,4,HAS_6309},
+	{"TFM",NULL,REGISTER,3,HAS_6309},
+	{"TFM",NULL,REGISTER,3,HAS_6309},
+	{"TFM",NULL,REGISTER,3,HAS_6309},
+	{"TFM",NULL,REGISTER,3,HAS_6309},
+	{"BITMD",NULL,IMMED_8,3,HAS_6309},
+	{"LDMD",NULL,IMMED_8,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SWI3",NULL,INHERENT,2,(TRANSFER|HAS_6809|HAS_6309)},
+// 4x
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"COME",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"DECE",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"INCE",NULL,INHERENT,2,HAS_6309},
+	{"TSTE",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CLRE",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"COMF",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"DECF",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"INCF",NULL,INHERENT,2,HAS_6309},
+	{"TSTF",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CLRF",NULL,INHERENT,2,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"SUBE",NULL,IMMED_8,3,HAS_6309},
+	{"CMPE",NULL,IMMED_8,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CMPU",NULL,IMMED_16,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDE",NULL,IMMED_8,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDE",NULL,IMMED_8,3,HAS_6309},
+	{"CMPS",NULL,IMMED_16,4,(HAS_6809|HAS_6309)},
+	{"DIVD",NULL,IMMED_16,3,HAS_6309},
+	{"DIVQ",NULL,IMMED_16,4,HAS_6309},
+	{"MULD",NULL,IMMED_16,4,HAS_6309},
+// 9x
+	{"SUBE",NULL,DIRECT,3,HAS_6309},
+	{"CMPE",NULL,DIRECT,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CMPU",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDE",NULL,DIRECT,3,HAS_6309},
+	{"STE",NULL,DIRECT,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDE",NULL,DIRECT,3,HAS_6309},
+	{"CMPS",NULL,DIRECT,3,(HAS_6809|HAS_6309)},
+	{"DIVD",NULL,DIRECT,3,HAS_6309},
+	{"DIVQ",NULL,DIRECT,3,HAS_6309},
+	{"MULD",NULL,DIRECT,3,HAS_6309},
+// Ax
+	{"SUBE",NULL,INDEXED,3,HAS_6309},
+	{"CMPE",NULL,INDEXED,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CMPU",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDE",NULL,INDEXED,3,HAS_6309},
+	{"STE",NULL,INDEXED,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDE",NULL,INDEXED,3,HAS_6309},
+	{"CMPS",NULL,INDEXED,3,(HAS_6809|HAS_6309)},
+	{"DIVD",NULL,INDEXED,3,HAS_6309},
+	{"DIVQ",NULL,INDEXED,3,HAS_6309},
+	{"MULD",NULL,INDEXED,3,HAS_6309},
+// Bx
+	{"SUBE",NULL,EXTENDED,4,HAS_6309},
+	{"CMPE",NULL,EXTENDED,4,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"CMPU",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDE",NULL,EXTENDED,4,HAS_6309},
+	{"STE",NULL,EXTENDED,4,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDE",NULL,EXTENDED,4,HAS_6309},
+	{"CMPS",NULL,EXTENDED,4,(HAS_6809|HAS_6309)},
+	{"DIVD",NULL,EXTENDED,4,HAS_6309},
+	{"DIVQ",NULL,EXTENDED,4,HAS_6309},
+	{"MULD",NULL,EXTENDED,4,HAS_6309},
+// Cx
+	{"SUBF",NULL,IMMED_8,3,HAS_6309},
+	{"CMPF",NULL,IMMED_8,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDF",NULL,IMMED_8,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDF",NULL,IMMED_8,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+// Dx
+	{"SUBF",NULL,DIRECT,3,HAS_6309},
+	{"CMPF",NULL,DIRECT,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDF",NULL,DIRECT,3,HAS_6309},
+	{"STF",NULL,DIRECT,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDF",NULL,DIRECT,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+// Ex
+	{"SUBF",NULL,INDEXED,3,HAS_6309},
+	{"CMPF",NULL,INDEXED,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDF",NULL,INDEXED,3,HAS_6309},
+	{"STF",NULL,INDEXED,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDF",NULL,INDEXED,3,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+// Fx
+    {"SUBF",NULL,EXTENDED,4,HAS_6309},
+	{"CMPF",NULL,EXTENDED,4,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"LDF",NULL,EXTENDED,4,HAS_6309},
+	{"STF",NULL,EXTENDED,4,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"ADDF",NULL,EXTENDED,4,HAS_6309},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER},
+	{"",NULL,INVALID,1,NEITHER}
+};
+
+// Indexed addressing mode from lower 5 bits of postbyte
+short pb6809[] = {
+    POSTINC_1,	POSTINC_2,	PREDEC_1,	PREDEC_2,
+	OFFSET_0,	OFFSET_B,	OFFSET_A,	IDXINVALID,
+	OFFSET_8,	OFFSET_16,	IDXINVALID,	OFFSET_D,
+	PCR_8,		PCR_16,		IDXINVALID,	IDXINVALID,
+	IDXINVALID,	IPOSTINC_2,	IDXINVALID,	IPREDEC_2,
+	IOFFSET_0,	IOFFSET_B,	IOFFSET_A,	IOFFSET_D,
+	IPCR_8,		IPCR_16,	IDXINVALID,	IDXINVALID
+};
+
+// Extra instruction bytes from indexed addressing mode
+// Works for 6809 and 6309
+short idxExtra[] = {
+    // OFFSET_0, OFFSET_5, OFFSET_8, OFFSET_16, OFFSET_A, OFFSET_B, OFFSET_D, OFFSET_E	7
+    0,	0,	1,	2,	0,	0,	0,	0,
+    // OFFSET_F, OFFSET_W, POSTINC_1, POSTINC_2, PREDEC_1, PREDEC_2	13, PCR_8, PCR_16
+	0,	0,	0,	0,	0,	0,	1,	2,
+	// IOFFSET_0, IOFFSET_8, IOFFSET_16, IOFFSET_A, IOFFSET_B, IOFFSET_D, IOFFSET_E, IOFFSET_F
+	0,	1,	2,	0,	0,	0,	0,	0,
+	// IOFFSET_W, IPOSTINC_2, IPREDEC_2, IPCR_8, IPCR_16, IEXTENDED, IDXINVALID
+	0,	0,	0,	1,	2,	2,	-1
+};
+
+short M6809_pbIndexMode(MemoryFile* mod, int offset) {
+	// Note: offset points to known index postbyte
+	unsigned char postByte = mod->storage[offset];
+	unsigned char pbMasked = postByte & 0b00011111;
+	if (postByte == 0b10011111) {
+		return	IEXTENDED;
+	}
+	if (!(postByte & 0b10000000)) {
+		return	OFFSET_5;
+	}
+	return pb6809[pbMasked];
+}
+
+short M6809_indexBytes(MemoryFile* mod, int offset) {
+	// Note: offset points to postbyte
+	// Return count of additional instruction bytes based on indexed mode
+	// This code doesn't check the end of the module, since
+	// it doesn't know how many other bytes are in the instruction
+	return idxExtra[M6809_pbIndexMode(mod, offset) & 0x1F];
+}
+
+short M6809_bytes10(MemoryFile* mod, int offset) {
+	// Note: offset points to postbyte
+	short baseBytes, indexBytes;
+	Instruction i = page10[mod->storage[offset]];
+    baseBytes = i.bytes;
+	if (i.flags & HAS_6809) {
+		switch (i.mode) {
+			case INDEXED:
+				// Opcode followed immediately by indexing mode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return 1;
+				}
+				indexBytes = M6809_indexBytes(mod, offset+1);
+                baseBytes = (indexBytes == -1) ? 1 : baseBytes + indexBytes;
+				break;
+			default:
+				break;
+		}
+		if (mod->storage[offset] == SWI2_2) {
+			// in OS9. SWI2 is followed by a postbyte
+			++baseBytes;
+		}
+	} else {
+		// Not a valid 6809 opcode
+		baseBytes = 1;
+	}
+	return baseBytes;
+}
+
+short M6809_bytes11(MemoryFile* mod, int offset) {
+	short baseBytes, indexBytes;
+	Instruction i = page11[mod->storage[offset]];
+    baseBytes = i.bytes;
+	if (i.flags & HAS_6809) {
+		switch (i.mode) {
+			case INDEXED:
+				// Opcode followed immediately by indexing mode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return 1;
+				}
+				indexBytes = M6809_indexBytes(mod, offset+1);
+                baseBytes = (indexBytes == -1) ? 1 : baseBytes + indexBytes;
+				break;
+			default:
+				break;
+		}
+	} else {
+		// Not a valid 6809 opcode
+		baseBytes = 1;
+	}
+	return baseBytes;
+}
+
+short M6809_bytes(MemoryFile* mod, int offset) {
+	short baseBytes, indexBytes;
+	Instruction i = page00[mod->storage[offset]];
+    baseBytes = i.bytes;
+	if (i.flags & HAS_6809) {
+		switch (i.mode) {
+			case INDEXED:
+				// Opcode followed immediately by indexing mode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return 1;
+				}
+                indexBytes = M6809_indexBytes(mod, offset+1);
+                baseBytes = (indexBytes == -1) ? 1 : baseBytes + indexBytes;
+                break;
+			case PREBYTE10:
+				// Prebyte followed immediately by extended opcode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return 1;
+				}
+				baseBytes = M6809_bytes10(mod, offset+1);
+				break;
+			case PREBYTE11:
+				// Prebyte followed immediately by extended opcode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return 1;
+				}
+				baseBytes = M6809_bytes11(mod, offset+1);
+				break;
+			default:
+				break;
+		}
+	} else {
+		// Not a valid 6809 opcode
+		baseBytes = 1;
+	}
+    if (offset+baseBytes > mod->length) {
+		// Not enough postbytes available; exit
+		baseBytes = 1;
+	}
+	return baseBytes;
+}
+
+unsigned char M6809_flags(MemoryFile* mod, int offset) {
+	// WARNING: Caller must check flags for HAS_6809
+	// NOTE: PULS and PULU can be LEAF if pull PC
+	// NOTE: TFR and EXG can be LEAF if modify PC
+	unsigned char flags;
+	unsigned char opcode = mod->storage[offset];
+	unsigned char postbyte;
+	Instruction i = page00[opcode];
+	switch (i.mode) {
+		case PREBYTE10:
+			// Prebyte followed immediately by extended opcode byte
+			if (offset != mod->length) {
+				opcode = mod->storage[offset+1];
+				return page10[opcode].flags;
+			}
+			break;
+		case PREBYTE11:
+			// Prebyte followed immediately by extended opcode byte
+			if (offset != mod->length) {
+				opcode = mod->storage[offset+1];
+				return page11[opcode].flags;
+			}
+			break;
+		default:
+			flags = i.flags;
+			switch(opcode) {
+				case 0x1E: // EXG
+					// Leaf if either register is PC
+					if (offset != mod->length) {
+						postbyte = mod->storage[offset+1];
+						flags |= ((postbyte & TREG_MASK) == TREG_PC) ? LEAF : 0;
+						flags |= ((postbyte & (TREG_MASK<<4)) == (TREG_PC<<4)) ? LEAF : 0;
+					}
+					break;
+				case 0x1F: // TFR
+					// Leaf if destination is PC
+					if (offset != mod->length) {
+						postbyte = mod->storage[offset+1];
+						flags |= ((postbyte & TREG_MASK) == TREG_PC) ? LEAF : 0;
+					}
+					break;
+				case 0x35: // PULS
+				case 0x37: // PULU
+					// Leaf if postbyte includes PC
+					if (offset != mod->length) {
+						postbyte = mod->storage[offset+1];
+						flags |= (postbyte & PREG_PC) ? LEAF : 0;
+					}
+					break;
+			}
+			return flags;
+	}
+
+	// Not a valid 6809 opcode or no postbyte available
+	return NEITHER;
+}
+
+// Fetch two bytes
+unsigned short M6809_get16(MemoryFile *mod, int offset) {
+	unsigned short word;
+	word = ((mod->storage[offset+0] << 8) | mod->storage[offset+1]);
+	return word;
+}
+
+// Return destination address of a control transfer (or -1)
+int M6809_transfer(MemoryFile* mod, int offset) {
+	int postByte, length;
+	unsigned char flags = M6809_flags(mod, offset);
+	if (flags & TRANSFER) {
+		unsigned char opc = mod->storage[offset+0];
+		if ((opc >= 0x20 && opc < 0x30) || opc == 0x8D) {
+			// Branch / bsr instructions with knowable destinations
+			// Result is PC after instruction, plus signed offset
+			length = M6809_bytes(mod, offset);
+			postByte = mod->storage[offset+1];
+			if (postByte & 0b10000000) postByte |= (-1 & ~0b01111111); // Sign extend
+			return offset + length + postByte;
+		} else if ((opc == 0x16) || (opc == 0x17)) {
+			// Long branch / lbsr instructions with knowable destinations
+			// Result is PC after instruction, plus signed offset
+			length = M6809_bytes(mod, offset);
+			postByte = M6809_get16(mod, offset+1);
+			if (postByte & 0b1000000000000000) postByte |= (-1 & ~0b0111111111111111); // Sign extend
+			return offset + length + postByte;
+		} else if (opc == 0x10) {
+			postByte = mod->storage[offset+1];
+			if (postByte >= 0x21 && postByte < 0x30) {
+				// Long branch instructions with knowable destinations
+				// Result is PC after instruction, plus signed offset
+				length = M6809_bytes(mod, offset);
+				postByte = M6809_get16(mod, offset+2);
+				if (postByte & 0b1000000000000000) postByte |= (-1 & ~0b0111111111111111); // Sign extend
+				return offset + length + postByte;
+			}
+		}
+	}
+	// No transfer address, or unknown transfer address
+	return  -1;
+}
+
+int M6809_mode(MemoryFile* mod, int offset) {
+	// Addressing mode of instruction
+	int mode = INVALID;
+	Instruction i = page00[mod->storage[offset]];
+	if (i.flags & HAS_6809) {
+		switch (i.mode) {
+			case PREBYTE10:
+				// Prebyte followed immediately by extended opcode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return INVALID;
+				}
+				i = page10[mod->storage[++offset]];
+				break;
+			case PREBYTE11:
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return INVALID;
+				}
+				i = page11[mod->storage[++offset]];
+				break;
+			default:
+				break;
+		}
+		mode = i.mode;
+		if (mode == INDEXED) {
+			// Opcode followed immediately by indexing mode byte
+			if (offset == mod->length) {
+				// No postbyte available; exit
+				return INVALID;
+			}
+			mode = M6809_pbIndexMode(mod, offset+1);
+		}
+	}
+	return mode;
+}
+
+// Return PC relative effective address of an instruction
+int M6809_pcrel(MemoryFile* mod, int offset) {
+	int length, postByte;
+	int dest = M6809_transfer(mod, offset);
+	if (dest == -1) {
+		// Check for pc-relative indexed addressing
+		int mode = M6809_mode(mod, offset);
+		switch (mode) {
+			case	REL_8:
+			case	PCR_8:
+			case	IPCR_8:
+				length = M6809_bytes(mod, offset);
+				postByte = mod->storage[offset+length-1];
+				if (postByte & 0b10000000) postByte |= (-1 & ~0b01111111); // Sign extend
+				return offset + length + postByte;
+			case	REL_16:
+			case	PCR_16:
+			case	IPCR_16:
+				length = M6809_bytes(mod, offset);
+				postByte = M6809_get16(mod, offset+length-2);
+				if (postByte & 0b1000000000000000) postByte |= (-1 & ~0b0111111111111111); // Sign extend
+				return offset + length + postByte;
+			default:
+				dest = -1;
+				break;
+		}
+	}
+	return dest;
+}
+
+static char labelBuf[16];
+char* M6809_label(MemoryMap* map, int offset) {
+	if (mm_isLabel(map, offset)) {
+		sprintf(labelBuf, "L%04X", offset);
+		return labelBuf;
+	}
+	return NULL;
+}
+
+// If the offset is out of bounds, return an "X" instead of "L" prefixed label
+char* M6809_labelUnbounded(MemoryMap* map, int offset) {
+	char *rv = M6809_label(map, offset);
+	if (!rv) {
+		sprintf(labelBuf, "X%04X", offset);
+		rv = labelBuf;
+	}
+	return rv;
+}
+
+char* M6809_opcode(MemoryFile* mod, int offset) {
+	// Addressing mode of instruction
+	char* opc = "???";
+	Instruction i = page00[mod->storage[offset]];
+	if (i.flags & HAS_6809) {
+		if ((mod->storage[offset+0] == SWI2_1) && (mod->storage[offset+1] == SWI2_2)) {
+			// OS9 system call has pseudo-opcode
+			return "OS9";
+		}
+		switch (i.mode) {
+			case PREBYTE10:
+				// Prebyte followed immediately by extended opcode byte
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return opc;
+				}
+				i = page10[mod->storage[++offset]];
+				break;
+			case PREBYTE11:
+				if (offset == mod->length) {
+					// No postbyte available; exit
+					return opc;
+				}
+				i = page11[mod->storage[++offset]];
+				break;
+			default:
+				break;
+		}
+		if (source) {
+			opc = i.mnemonic;
+		} else {
+			opc = i.altMnemonic? i.altMnemonic : i.mnemonic;
+		}
+	}
+	return opc;
+}
+
+char *modeNames[] = {
+	// Base modes
+	"DIRECT",		"PREBYTE10",	"PREBYTE11",	"INHERENT",
+	"INVALID",		"REL_8",		"REL_16",		"IMMED_8",
+	"IMMED_16",		"IMMED_32",		"REGISTER",		"INDEXED",
+	"EXTENDED",		"SINGLE_BIT",	"WINDEXED",		"REGSTACK_S",
+
+	// Spare
+	"REGSTACK_U",	"",				"",				"",
+	"",	"",	"",	"",	"",	"",	"",	"",	"",	"",	"",	"",
+
+	// Indexed modes
+	"OFFSET_0",		"OFFSET_5",		"OFFSET_8",		"OFFSET_16",
+	"OFFSET_A",		"OFFSET_B",		"OFFSET_D",		"OFFSET_E",
+	"OFFSET_F",		"OFFSET_W",		"POSTINC_1",	"POSTINC_2",
+	"PREDEC_1",		"PREDEC_2",		"PCR_8",		"PCR_16",
+	"IOFFSET_0",	"IOFFSET_8",	"IOFFSET_16",	"IOFFSET_A",
+	"IOFFSET_B",	"IOFFSET_D",	"IOFFSET_E",	"IOFFSET_F",
+	"IOFFSET_W",	"IPOSTINC_2",	"IPREDEC_2",	"IPCR_8",
+	"IPCR_16",		"IEXTENDED",	"IDXINVALID"
+};
+
+char *tregNames[] = {
+	"D",	"X",	"Y",	"U",
+	"S",	"PC",	"",		"",
+	"A",	"B",	"CC",	"DP"
+};
+
+// When using U as stack, U here becomes S
+char *pregNames[] = {
+	"CC",	"A",	"B",	"DP",
+	"X",	"Y",	"U",	"PC"
+};
+
+char *iregNames[] = {
+	"X",	"Y",	"U",	"S"
+};
+
+char* M6809_modeName(MemoryFile* mod, int offset) {
+	return modeNames[M6809_mode(mod, offset)];
+}
+
+char* M6809_iregName(int postbyte) {
+	return iregNames[(postbyte>>5) & 0x03];
+}
+
+char* M6809_indir1(char *p, int mode) {
+	if (mode >= IOFFSET_0) *p++ = '[';
+	*p = '\0';
+	return p;
+}
+
+char* M6809_indir2(char *p, int mode) {
+	if (mode >= IOFFSET_0) *p++ = ']';
+	*p = '\0';
+	return p;
+}
+
+char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) {
+	int postbyte, v, i, eff;
+	int mode = M6809_mode(mod, offset);
+	int length = M6809_bytes(mod, offset);
+	char *label, *postLabel = NULL;
+	char *p = buffer;
+	p = M6809_indir1(buffer, mode);
+	switch (mode) {
+		case	DIRECT:
+			// OK to show direct page references whether source or not
+			sprintf(p, "<$%02X", mod->storage[offset+length-1]);
+			break;
+		case	INHERENT:
+			if ((mod->storage[offset+0] == SWI2_1) && (mod->storage[offset+1] == SWI2_2)) {
+				// OS9 system call has pseudo-operand
+				sprintf(p, "%s", OS9_svcName(mod, offset));
+			}
+			break;
+		case	REL_8:
+			if (source) {
+				eff = M6809_pcrel(mod, offset);
+				if((label=M6809_label(map, eff))) {
+					sprintf(p, "%s", label);
+					break;
+				}
+				// Destination was not previously declared a label
+				mm_setLabel(map, eff, 1);
+				postLabel = M6809_labelUnbounded(map, eff);
+				postbyte = mod->storage[offset+length-1];
+				if (postbyte & 0b10000000) {
+					sprintf(p, "*-$%02X", (~postbyte+1) & 0b01111111);
+				} else {
+					sprintf(p, "*+$%02X", postbyte);
+				}
+			} else {
+				sprintf(p, "__");
+			}
+			break;
+		case	REL_16:
+			if (source) {
+				eff = M6809_pcrel(mod, offset);
+				if((label=M6809_label(map, eff))) {
+					sprintf(p, "%s", label);
+					break;
+				}
+				// Destination was not previously declared a label
+				mm_setLabel(map, eff, 1);
+				postLabel = M6809_labelUnbounded(map, eff);
+				postbyte = M6809_get16(mod, offset+length-2);
+				if (postbyte & 0b1000000000000000) {
+					sprintf(p, "*-$%02X", (~postbyte+1) & 0b0111111111111111);
+				} else {
+					sprintf(p, "*+$%02X", postbyte);
+				}
+			} else {
+				sprintf(p, "__");
+			}
+			break;
+		case	IMMED_8:
+			// Probably OK to show immediates whether source or not
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, "#$%02X", postbyte);
+			break;
+		case	IMMED_16:
+			// Probably OK to show immediates whether source or not
+			postbyte = M6809_get16(mod, offset+length-2);
+			sprintf(p, "#$%04X", postbyte);
+			break;
+		case	IMMED_32:
+			// Probably OK to show immediates whether source or not
+			postbyte = M6809_get16(mod, offset+length-4) << 16;
+			postbyte |= M6809_get16(mod, offset+length-2);
+			sprintf(p, "<$%08X", postbyte);
+			break;
+		case	REGISTER:
+			// OK to show register operations whether source or not
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, "%s,%s", tregNames[postbyte>>4], tregNames[postbyte & TREG_MASK]);
+			break;
+		case	EXTENDED:
+		case	IEXTENDED:
+			// Probably OK to show absolute references whether source or not
+			postbyte = M6809_get16(mod, offset+length-2);
+			sprintf(p, "$%04X", postbyte);
+			break;
+		case	REG_PULL_S:
+		case	REG_PULL_U:
+			// OK to show register stacking operations whether source or not
+			postbyte = mod->storage[offset+length-1];
+			for (i=0; i<8; i++) {
+				if (postbyte & 1) {
+					if (p!=buffer) {
+						*p++ = ',';
+					}
+					if ((i==1) && (postbyte & 2)) {
+						*p++ = 'D';
+						*p = '\0';
+						postbyte >>= 1;
+						i++;
+					} else if ((i==6) && (mode==REG_PULL_U)) {
+						*p++ = 'U';
+						*p = '\0';
+					} else {
+						strcpy(p, pregNames[i]);
+						p += strlen(p);
+					}
+				}
+				postbyte >>= 1;
+			}
+			break;
+		case	REG_PUSH_S:
+		case	REG_PUSH_U:
+			// OK to show register stacking operations whether source or not
+			postbyte = mod->storage[offset+length-1];
+			for (i=7; i>=0; --i) {
+				if (postbyte & 0b10000000) {
+					if (p!=buffer) {
+						*p++ = ',';
+					}
+					if ((i==2) && (postbyte & 0b01000000)) {
+						*p++ = 'D';
+						*p = '\0';
+						postbyte <<= 1;
+						--i;
+					} else if ((i==6) && (mode==REG_PUSH_U)) {
+						*p++ = 'U';
+						*p = '\0';
+					} else {
+						strcpy(p, pregNames[i]);
+						p += strlen(p);
+					}
+				}
+				postbyte <<= 1;
+			}
+			break;
+		case	OFFSET_0:
+		case	IOFFSET_0:
+			// OK to show zero offsets whether source or not
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, ",%s", M6809_iregName(postbyte));
+			break;
+		case	OFFSET_5:
+			// OK to show offsets that aren't PCR whether source or not
+			postbyte = mod->storage[offset+length-1];
+			v = postbyte & 0b00011111;
+			if (v & 0b00010000) {
+				sprintf(p, "-%d,%s", (~v+1) & 0b00011111, M6809_iregName(postbyte));
+			} else {
+				sprintf(p, "%d,%s", v, M6809_iregName(postbyte));
+			}
+			break;
+		case	OFFSET_8:
+		case	IOFFSET_8:
+			// OK to show offsets that aren't PCR whether source or not
+			postbyte = mod->storage[offset+length-2];
+			v = mod->storage[offset+length-1];
+			if (v & 0b10000000) {
+				sprintf(p, "-%d,%s", (~v+1) & 0b011111111, M6809_iregName(postbyte));
+			} else {
+				sprintf(p, "%d,%s", v, M6809_iregName(postbyte));
+			}
+			break;
+		case	OFFSET_16:
+		case	IOFFSET_16:
+			// OK to show offsets that aren't PCR whether source or not
+			postbyte = mod->storage[offset+length-3];
+			v = M6809_get16(mod, offset+length-2);
+			if (v & 0b1000000000000000) {
+				sprintf(p, "-%d,%s", (~v+1) & 0b01111111111111111, M6809_iregName(postbyte));
+			} else {
+				sprintf(p, "%d,%s", v, M6809_iregName(postbyte));
+			}
+			break;
+		case	OFFSET_A:
+		case	IOFFSET_A:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, "A,%s", M6809_iregName(postbyte));
+			break;
+		case	OFFSET_B:
+		case	IOFFSET_B:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, "B,%s", M6809_iregName(postbyte));
+			break;
+		case	OFFSET_D:
+		case	IOFFSET_D:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, "D,%s", M6809_iregName(postbyte));
+			break;
+		case	POSTINC_1:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, ",%s+", M6809_iregName(postbyte));
+			break;
+		case	POSTINC_2:
+		case	IPOSTINC_2:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, ",%s++", M6809_iregName(postbyte));
+			break;
+		case	PREDEC_1:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, ",-%s", M6809_iregName(postbyte));
+			break;
+		case	PREDEC_2:
+		case	IPREDEC_2:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, ",--%s", M6809_iregName(postbyte));
+			break;
+		case	PCR_8:
+		case	IPCR_8:
+			if (source) {
+				eff = M6809_pcrel(mod, offset);
+				if((label=M6809_label(map, eff))) {
+					sprintf(p, "%s,PCR", label);
+					break;
+				}
+				// Destination was not previously declared a label
+				mm_setLabel(map, eff, 1);
+				postLabel = M6809_labelUnbounded(map, eff);
+				postbyte = mod->storage[offset+length-1];
+				if (postbyte & 0b10000000) {
+					sprintf(p, "*-$%02X,PCR", (~postbyte+1) & 0b011111111);
+				} else {
+					sprintf(p, "*+$%02X,PCR", postbyte);
+				}
+			} else {
+				sprintf(p, "__,PCR");
+			}
+			break;
+		case	PCR_16:
+		case	IPCR_16:
+			if (source) {
+				eff = M6809_pcrel(mod, offset);
+				if((label=M6809_label(map, eff))) {
+					sprintf(p, "%s,PCR", label);
+					break;
+				}
+				// Destination was not previously declared a label
+				mm_setLabel(map, eff, 1);
+				postLabel = M6809_labelUnbounded(map, eff);
+				postbyte = M6809_get16(mod, offset+length-2);
+				if (postbyte & 0b1000000000000000) {
+					sprintf(p, "*-$%04X,PCR", (~postbyte+1) & 0b01111111111111111);
+				} else {
+					sprintf(p, "*+$%04X,PCR", postbyte);
+				}
+			} else {
+				sprintf(p, "__,PCR");
+			}
+			break;
+		case	IDXINVALID:
+		default:
+			postbyte = mod->storage[offset+length-1];
+			sprintf(p, "%s", M6809_modeName(mod, offset));
+			p = buffer + strlen(buffer);
+			for (i=0; i<length; i++) {
+				sprintf(p, " %02X", mod->storage[offset+i]);
+				p += strlen(p);
+			}
+			break;
+	}
+	p = M6809_indir2(p+strlen(p), mode);
+	if (source && postLabel) {
+		sprintf(p, " %s", postLabel);
+		p += strlen(p);
+	}
+    return buffer;
+}
+
