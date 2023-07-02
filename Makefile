@@ -1,6 +1,6 @@
 PROJECT_ROOT = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-OBJS = diffdasm.o intstack.o memorymap.o memoryfile.o stats6809.o statsOS9.o
+OBJS = diffdasm.o intstack.o memorymap.o memoryfile.o stats6809.o statsOS9.o statsCoCo3.o
 
 ifeq ($(BUILD_MODE),debug)
 	CFLAGS += -g
@@ -26,5 +26,5 @@ clean:
 
 install:    all
 	rm -f /usr/local/bin/diffdasm
-	cp build/make.debug.macosx.x86_64/diffdasm /usr/local/bin/
+	cp diffdasm /usr/local/bin/
 

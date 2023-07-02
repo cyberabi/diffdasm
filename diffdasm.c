@@ -19,6 +19,7 @@
 #include "linelist.h"
 #include "os9stuff.h"
 #include "stats6809.h"
+#include "statsCoCo3.h"
 
 #define STACKLIMIT 65536
 #define STRMAX 4096
@@ -37,9 +38,11 @@ LineList lines[LINEMAX]; // Used to map line numbers to byte ranges
 int lineCount = 0;
 
 char operands[32]; // Disassembly operand buffer
+char comment[STRMAX]; // Disassembly comment buffer
 
 int source = 0; // Non-zero to disassemble in source format
 int f9info = 0; // Non-zero to output only code / data map info for f9dasm
+int ioflag = 0; // Non-zero to call out potential references to (Color Computer) I/O
 int _debug = 0; // Non-zero to print debug information
 
 void usage() {
@@ -49,6 +52,7 @@ void usage() {
 	printf("--exec xxxx Specifies a hex execution address. Can use multiple times.\n");
 	printf("--source Output in assembler source format rather than diff format.\n");
 	printf("--f9info Output in f9dasm info file format rather than diff format.\n");
+	printf("--ioflag Call out potential references to (Color Computer) I/O.\n");
 	printf("--debug  Output debugging information.\n");
     exit(1);
 }
@@ -56,6 +60,7 @@ void usage() {
 void init() {
 	intstack_init(&addrStack, STACKLIMIT);
 	intstack_init(&labelStack, STACKLIMIT);
+	comment[0] = '\0';
 }
 
 void processArgs(int argc, char **argv) {
@@ -88,6 +93,9 @@ void processArgs(int argc, char **argv) {
 		} else if (!strcmp(*argv,"--f9info")) {
 			// Flag that we want f9dasm info output
 			f9info = 1;
+		} else if (!strcmp(*argv,"--ioflag")) {
+			// Flag that we want IO addresses commented
+			ioflag = 1;
 		} else if (!strcmp(*argv,"--debug")) {
 			// Flag that we want debug output
 			_debug = 1;
@@ -430,28 +438,60 @@ void dumpMap() {
 	mm_dump(&map, 64);
 }
 
-void dumpBytes(MemoryFile *mod, int offset, int length) {
-	int i;
-	for (i=0; i<length; i++)
+void appendComment(char* text) {
+	int cl = strlen(comment);
+	sprintf(comment+cl, " %s", text);
+}
+
+void eol() {
+	// Dump comment (if any) and end-of-line
+	if (*comment)
 	{
-		printf(" %02X", mod->storage[offset+i]);
+		printf(" ;%s", comment);
+		*comment = '\0';
 	}
 	printf("\n");
 }
 
-void dumpPairs(MemoryFile *mod, int offset, int length) {
-	int i, odd = (length & 1);
-	if (odd) {
-		--length;
+void dumpBytes(MemoryFile *mod, int offset, int length) {
+	int i;
+	char sep = ' ';
+	for (i=0; i<length; i++)
+	{
+		if (ioflag && (i<(length-1)))
+		{
+			char *io = CoCo3_ioNameData(mod, offset+i);
+			if (*io)
+			{
+				int cl = strlen(comment);
+				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+			}
+		}
+		printf("%c%02X", sep, mod->storage[offset+i]);
+		sep = ',';
 	}
+	eol();
+}
+
+void dumpPairs(MemoryFile *mod, int offset, int length) {
+	int i;
+	char sep = ' ';
+	length &= ~1;
 	for (i=0; i<length; i+=2)
 	{
-		printf(" %02X%02X", mod->storage[offset+i], mod->storage[offset+i+1]);
+		if (ioflag)
+		{
+			char *io = CoCo3_ioNameData(mod, offset+i);
+			if (*io)
+			{
+				int cl = strlen(comment);
+				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+			}
+		}
+		printf("%c%02X%02X", sep, mod->storage[offset+i], mod->storage[offset+i+1]);
+		sep = ',';
 	}
-	printf("\n");
-	if (odd) {
-		dumpBytes(mod, offset+length, 1);
-	}
+	eol();
 }
 
 void dumpString(MemoryFile *mod, int offset, int length) {
@@ -478,9 +518,62 @@ void dumpString(MemoryFile *mod, int offset, int length) {
 				break;
 		}
 	}
-	printf("\"\n");
+	printf("\"");
+	eol();
 }
 
+void dumpManyBytes(char* mnemonic, MemoryFile *mod, int offset, int length) {
+	int i;
+	char sep;
+	for (i=0; i<length; i++)
+	{
+		if ((i%8) == 0)
+		{
+			if (i) eol();
+			printf(" %s", mnemonic);
+			sep = ' ';
+		}
+		if (ioflag && (i<(length-1)))
+		{
+			char *io = CoCo3_ioNameData(mod, offset+i);
+			if (*io)
+			{
+				int cl = strlen(comment);
+				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+			}
+		}
+		printf("%c%02X", sep, mod->storage[offset+i]);
+		sep = ',';
+	}
+	eol();
+}
+
+void dumpManyPairs(char* mnemonic, MemoryFile *mod, int offset, int length) {
+	int i;
+	char sep;
+	length &= ~1;
+	for (i=0; i<length; i+=2)
+	{
+		if ((i%8) == 0)
+		{
+			if (i) eol();
+			printf(" %s", mnemonic);
+			sep = ' ';
+		}
+		if (ioflag)
+		{
+			char *io = CoCo3_ioNameData(mod, offset+i);
+			if (*io)
+			{
+				int cl = strlen(comment);
+				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+			}
+		}
+		printf("%c%02X%02X", sep, mod->storage[offset+i], mod->storage[offset+i+1]);
+		sep = ',';
+	}
+	eol();
+}
 void disassemble(MemoryFile *mod, MemoryMap *map) {
 	// TODO: map line numbers to eff values
 	int run, length, type;
@@ -499,10 +592,8 @@ void disassemble(MemoryFile *mod, MemoryMap *map) {
 		switch (type) {
 			case MM_UNKNOWN:
 			case MM_FCB:
-				// Get the run length, crop to 16
-				if (run > 16) run = 16;
-				printf(" FCB");
-				dumpBytes(mod, eff, run);
+				// Get the run length, crop to 8
+				dumpManyBytes("FCB", mod, eff, run);
 				break;
 			case MM_FCC:
 				// Output as-is
@@ -510,16 +601,18 @@ void disassemble(MemoryFile *mod, MemoryMap *map) {
 				dumpString(mod, eff, run);
 				break;
 			case INVALID:
-				// Get the run length, crop to 16
-				if (run > 16) run = 16;
-				printf(" ???");
-				dumpBytes(mod, eff, run);
+				// Get the run length, crop to 8
+				dumpManyBytes("???", mod, eff,run);
 				break;
 			case MM_FDB:
-				// Get the run length, crop to 16
-				if (run > 16) run = 16;
-				printf(" FDB");
-				dumpPairs(mod, eff, run);
+				// Get the run length, crop to 8
+				length = run & 0x01;
+				dumpManyPairs("FDB", mod, eff, run - length);
+				// If there's an extra byte at the end, handle it
+				if (length) {
+					printf(" FCB");
+					dumpBytes(mod, eff + run - length, 1);
+				}
 				break;
 			case MM_FCS:
 				// Output as-is
@@ -528,7 +621,17 @@ void disassemble(MemoryFile *mod, MemoryMap *map) {
 				break;
 			case MM_CODE1:
 				// Output as-is
-				printf(" %s %s\n", M6809_opcode(mod, eff), M6809_operands(operands, mod, map, eff));
+				if (ioflag)
+				{
+					char *io = CoCo3_ioNameCode(mod, eff);
+					if (*io)
+					{
+						int cl = strlen(comment);
+						sprintf(comment+cl, " IOREF 0x%04X: %s", eff, io);
+					}
+				}
+				printf(" %s %s", M6809_opcode(mod, eff), M6809_operands(operands, mod, map, eff));
+				eol();
 				break;
 			default:
 				// Output as a single FCB

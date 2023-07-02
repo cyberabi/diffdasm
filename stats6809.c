@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include <string.h>
 
+#include "diffdasm.h"
 #include "os9stuff.h"
 #include "memoryfile.h"
 #include "memorymap.h"
@@ -1398,9 +1399,9 @@ char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) 
 			postbyte = mod->storage[offset+length-1];
 			v = postbyte & 0b00011111;
 			if (v & 0b00010000) {
-				sprintf(p, "-%d,%s", (~v+1) & 0b00011111, M6809_iregName(postbyte));
+				sprintf(p, "-$%X,%s", (~v+1) & 0b00011111, M6809_iregName(postbyte));
 			} else {
-				sprintf(p, "%d,%s", v, M6809_iregName(postbyte));
+				sprintf(p, "$%X,%s", v, M6809_iregName(postbyte));
 			}
 			break;
 		case	OFFSET_8:
@@ -1409,9 +1410,9 @@ char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) 
 			postbyte = mod->storage[offset+length-2];
 			v = mod->storage[offset+length-1];
 			if (v & 0b10000000) {
-				sprintf(p, "-%d,%s", (~v+1) & 0b011111111, M6809_iregName(postbyte));
+				sprintf(p, "-$%X,%s", (~v+1) & 0b011111111, M6809_iregName(postbyte));
 			} else {
-				sprintf(p, "%d,%s", v, M6809_iregName(postbyte));
+				sprintf(p, "$%X,%s", v, M6809_iregName(postbyte));
 			}
 			break;
 		case	OFFSET_16:
@@ -1420,9 +1421,9 @@ char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) 
 			postbyte = mod->storage[offset+length-3];
 			v = M6809_get16(mod, offset+length-2);
 			if (v & 0b1000000000000000) {
-				sprintf(p, "-%d,%s", (~v+1) & 0b01111111111111111, M6809_iregName(postbyte));
+				sprintf(p, "-$%X,%s", (~v+1) & 0b01111111111111111, M6809_iregName(postbyte));
 			} else {
-				sprintf(p, "%d,%s", v, M6809_iregName(postbyte));
+				sprintf(p, "$%X,%s", v, M6809_iregName(postbyte));
 			}
 			break;
 		case	OFFSET_A:
@@ -1513,8 +1514,7 @@ char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) 
 	}
 	p = M6809_indir2(p+strlen(p), mode);
 	if (source && postLabel) {
-		sprintf(p, " %s", postLabel);
-		p += strlen(p);
+		appendComment(postLabel);
 	}
     return buffer;
 }

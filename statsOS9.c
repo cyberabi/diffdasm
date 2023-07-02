@@ -14,6 +14,7 @@
 #include "os9.h"
 #include "memoryfile.h"
 
+// Every OS9 SVC in numerical order from 0x00
 char *svcNames[] = {
 	"F$LINK",	/* 00 Link to Module */
 	"F$LOAD",	/* 01 Load Module from File */
@@ -105,7 +106,7 @@ char *svcNames[] = {
 	"$78", "$79", "$7A", "$7B", "$7C", "$7D", "$7E", "$7F",
 
 	"I$ATTACH",	/* 80 Attach I/O Device */
-	"I$FETACH",	/* 81 Detach I/O Device */
+	"I$DETACH",	/* 81 Detach I/O Device */
 	"I$FUP",	/* 82 Duplicate Path */
 	"I$CREATE",	/* 83 Create New File */
 	"I$OPEN",	/* 84 Open Existing File */

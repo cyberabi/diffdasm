@@ -121,6 +121,9 @@ typedef struct Instruction {
 
 #define CPU_MASK	0b00000011
 
+// Return an enumerated value for the addressing mode of the instruction
+int M6809_mode(MemoryFile* mod, int offset);
+
 // Return the number of bytes for the opcode at the specified pointer
 short M6809_bytes(MemoryFile* mod, int offset);
 

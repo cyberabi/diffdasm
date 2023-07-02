@@ -17,4 +17,6 @@ typedef struct MemoryFile {
 // Initialize a memory file
 void mf_init(MemoryFile* file, int fileSize, char *id);
 
+int mf_get_word(MemoryFile* file, int offset);
+
 #endif /* MEMORYFILE_H_ */
