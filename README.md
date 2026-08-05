@@ -18,7 +18,23 @@ This has a few advantages over a conventional disassembler:
 1) It generally won't try to disassemble data as code
 2) It knows about the jump tables in common OS9 module types
    and can seed its stack with those entry points
-3) It can output metadata to drive other disassemblers such
+3) It's OS9-aware but can also disassemble any 6809/6309 binary
+4) The output format is designed to be "diffable" -- for example
+   when comparing disassembly of a baseline and customized module
+5) It can output metadata to drive other disassemblers such
    as f9dasm
+
+Usage:
+
+diffdasm <options> <module>
+Disassemble 6809 OS9 module to a diffable format.
+
+Options:
+--base xxxx Specifies a hex base address (defaults to zero)
+--exec xxxx Specifies a hex execution address. Can use multiple times.
+--source Output in assembler source format rather than diff format.
+--f9info Output in f9dasm info file format rather than diff format.
+--ioflag Call out potential references to (Color Computer) I/O.
+--debug  Output debugging information.
 
 MIT license. Enjoy.
