@@ -11,7 +11,7 @@ This has a few advantages over a conventional disassembler:
 * It knows about the jump tables in common OS9 module types and can seed its stack with those entry points
 * It's OS9-aware but can also disassemble any 6809/6309 binary
 * The output format is designed to be "diffable" -- for example when comparing disassembly of a baseline and customized module
-* It can output metadata to drive other disassemblers such as f9dasm
+* It can output metadata to drive other disassemblers such as [f9dasm](https://www.hermannseib.com/english/opensource.htm)
 
 ```
 Usage:
@@ -27,6 +27,8 @@ Options:
 --ioflag Call out potential references to (Color Computer) I/O.
 --debug  Output debugging information.
 ```
+
+License:
 
 MIT license. Enjoy.
 
