@@ -29,3 +29,5 @@ Options:
 ```
 
 MIT license. Enjoy.
+
+Chris Burke 8-5-26
