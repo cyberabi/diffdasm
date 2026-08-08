@@ -256,6 +256,16 @@ void dumpStack() {
 	}
 }
 
+void dumpLines() {
+	int at;
+	printf("\nLine Cross Reference:\n");
+	printf("Line   Addr  Bytes\n");
+	printf("------ ----- -----\n");
+	for (at=1; at<=lineCount; at++) {
+		printf("%5d: $%04X (%d)\n", lines[at].lineNumner, lines[at].startOffset, lines[at].endOffset - lines[at].startOffset + 1);
+	}
+}
+
 int couldBeString(MemoryFile *mod, int entryPoint) {
 	// Here, we speculatively look forward from offset checking
 	// for 7-bit ASCII sequences with only certain control
@@ -584,9 +594,12 @@ void disassemble(MemoryFile *mod, MemoryMap *map) {
 		type = mm_type(map, eff);
 		run = mm_runLength(map, eff);
 		//printf("%d: ", lineCount+1);
-		if (source) {
-			if ((label=M6809_label(map,eff))) {
+		if ((label=M6809_label(map,eff))) {
+			if (source) {
 				printf("%s", label);
+			} else {
+				// Display a generic string for all labels if diff
+				printf("LABEL");
 			}
 		}
 		switch (type) {
@@ -697,6 +710,7 @@ int main(int argc, char **argv) {
 		infogen(&input);
 	} else {
 		disassemble(&input, &map);
+		if (!source) dumpLines();
 	}
 	return 0;
 }
