@@ -9,5 +9,6 @@
 #define DIFFDASM_H_
 
 void appendComment(char* text);
+void usage();
 
 #endif /* DIFFDASM_H_ */

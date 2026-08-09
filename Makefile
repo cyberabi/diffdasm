@@ -1,6 +1,6 @@
 PROJECT_ROOT = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-OBJS = diffdasm.o intstack.o memorymap.o memoryfile.o stats6809.o statsOS9.o statsCoCo3.o
+OBJS = diffdasm.o intstack.o memorymap.o memoryfile.o srecord.o stats6809.o statsOS9.o statsCoCo3.o
 
 ifeq ($(BUILD_MODE),debug)
 	CFLAGS += -g

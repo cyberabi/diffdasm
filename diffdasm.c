@@ -1,6 +1,6 @@
 
 //
-// Disassemble OS9 module to a diffable format
+// Disassemble OS9 module or ROM image to a diffable format
 //
 // diffdasm --entry=xxxx ... <binary>
 //
@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
 
 #include "intstack.h"
@@ -20,6 +21,9 @@
 #include "os9stuff.h"
 #include "stats6809.h"
 #include "statsCoCo3.h"
+#include "srecord.h"
+
+#include "diffdasm.h"
 
 #define STACKLIMIT 65536
 #define STRMAX 4096
@@ -28,17 +32,18 @@
 #define STRING_THRESHOLD 4
 
 char* inFileName = NULL;
-unsigned baseAddr = 0;
 
+unsigned baseAddr = 0;	// Runtime address of start of module
 MemoryFile input;
 MemoryMap map;
-IntStack addrStack; // Stack of known-good execution addresses
-IntStack labelStack; // Stack of labels (e.g. ,pcr references) that could be execution addresses
+
+IntStack addrStack;	// Stack of known-good execution addresses
+IntStack labelStack;	// Stack of labels (e.g. ,pcr references) that could be execution addresses
 LineList lines[LINEMAX]; // Used to map line numbers to byte ranges
 int lineCount = 0;
 
-char operands[32]; // Disassembly operand buffer
-char comment[STRMAX]; // Disassembly comment buffer
+char operands[32];	// Disassembly operand buffer
+char comment[STRMAX];	// Disassembly comment buffer
 
 int source = 0; // Non-zero to disassemble in source format
 int f9info = 0; // Non-zero to output only code / data map info for f9dasm
@@ -47,7 +52,7 @@ int _debug = 0; // Non-zero to print debug information
 
 void usage() {
 	fflush(stderr);
-	printf("Usage:\ndiffdasm <options> <module>\nDisassemble 6809 OS9 module to a diffable format.\n\n");
+	printf("Usage:\ndiffdasm <options> <module>\nDisassemble 6809 OS9 module or ROM image to a diffable format.\nInput must be a binary module or in .s19 / .mhx format.\n\n");
 	printf("Options:\n--base xxxx Specifies a hex base address (defaults to zero)\n");
 	printf("--exec xxxx Specifies a hex execution address. Can use multiple times.\n");
 	printf("--source Output in assembler source format rather than diff format.\n");
@@ -106,17 +111,15 @@ void processArgs(int argc, char **argv) {
 	}
 }
 
-void loadFile(char *fName) {
+int loadBinaryFile(char* fName) {
 	FILE		*fp1;
 	unsigned char *mp;
 	size_t		moduleLength;
 
-	if (_debug) printf("loadFile(%s)...\n", fName);
-	if (NULL == fName) {
-		usage();
-	}
+	if (_debug) printf("loadBinaryFile(%s)...\n", fName);
+
 	if (!(fp1 = fopen(fName,"rb"))) {
-		fprintf(stderr, "ERROR: unable to open '%s'\n", fName);
+		fprintf(stderr, "loadBinaryFile(%s): ERROR: unable to open '%s'\n", fName, fName);
 		usage();
 	}
 	fseek(fp1, 0, SEEK_END);
@@ -125,19 +128,51 @@ void loadFile(char *fName) {
 
 	// Try to allocate memory for module(s)
 	mf_init(&input, moduleLength, fName);
+	mf_set_base(&input, baseAddr);
 
 	// Read the module(s) in
 	if (moduleLength != fread(input.storage, 1, moduleLength, fp1)) {
-		fprintf(stderr, "ERROR: Couldn't load '%s'.\n", fName);
+		fprintf(stderr, "loadBinaryFile(%s): ERROR: Couldn't load '%s'.\n", fName, fName);
 		exit(1);
 	}
 	fclose(fp1);
 
 	// Try to allocate memory for map
-	if (_debug) printf("loadFile(%s): allocating $%04X bytes for map\n", fName, (int)moduleLength);
+	if (_debug) printf("loadBinaryFile(%s): allocating $%04X bytes for map\n", fName, (int)moduleLength);
 	mm_init(&map, moduleLength, fName);
 
-	if (_debug) printf("loadFile(%s): loaded $%04X bytes\n", fName, (int)moduleLength);
+	if (_debug) printf("loadBinaryFile(%s): loaded $%04X bytes\n", fName, (int)moduleLength);
+	return 0;
+}
+
+void loadFile(char *fName) {
+
+	if (_debug) printf("loadFile(%s)...\n", fName);
+	if (NULL == fName) {
+		usage();
+	}
+
+	// Support for s-records
+	int exec = 0;
+	int fNameLen = strlen(fName);
+	if (fNameLen >= 4) {
+		char *suffix = fName + strlen(fName)-4;
+		int srec = !strcasecmp(suffix, ".s19") || !strcasecmp(suffix, ".mhx");
+		if (srec) {
+			exec = loadMHXFile(fName);
+		} else {
+			exec = loadBinaryFile(fName);
+		}
+	} else {
+		exec = loadBinaryFile(fName);
+	}
+
+	// Push the explicit entry address if provided.
+	// NOTE: The stack data structure works in offsets.
+	if (exec != 0x0000) {
+		if (_debug) printf("loadFile(%s): Known address: %04X\n", fName, exec);
+		intstack_push(&addrStack, exec - input.abs_base);
+	}
 }
 
 // Calculate an indirect address (load from offset, then adjust by jtOffset)
@@ -169,7 +204,11 @@ char* stringAt(MemoryFile *mod, unsigned offset) {
 }
 
 void inferEntry(MemoryFile *mod) {
+
+	//
 	// Check for concatenation of OS9 modules
+	//
+	if (_debug) printf("inferEntry: checking for OS9 modules.\n");
 	int offset = 0;
 	while (offset < mod->length) {
 		// An executable OS9 module has at least a 12-byte module header and a 3-byte CRC
@@ -238,6 +277,26 @@ void inferEntry(MemoryFile *mod) {
 			// Not a module; skip to end
 			// NOTE: Could scan for sync bytes here
 			offset = mod->length;
+		}
+	}
+
+	//
+	// Check for loaded data that overlaps the 6809 vectors.
+	//
+	// TODO: Generalize this for any absolute jump tables,
+	// and add a command line switch to specify a jump table.
+	//
+	if (_debug) printf("inferEntry: checking for vector page.\n");
+	int baseAddress = mod->abs_base;
+	int endAddress = baseAddress + mod->length - 1;
+	if (_debug) printf("inferEntry: loaded address range is %04X - %04X.\n", baseAddress, endAddress);
+	for (int a = 0xFFF0; a < 0xFFFF; a += 2) {
+		if (a >= baseAddress && a < endAddress) {
+			int vecAddress = mf_get_abs_word(mod, a);
+			if (_debug) printf("inferEntry: Known address [%04X] = %04X\n", a, vecAddress);
+			// Both of these data structures work in offsets
+			mm_setFDB(&map, a - mod->abs_base, 1); // exec, storage
+			intstack_push(&addrStack, vecAddress - mod->abs_base);
 		}
 	}
 
@@ -349,7 +408,12 @@ void mapCode(MemoryFile *mod) {
 	// Build the map based on linear and (easy) branch traversal
 	while (!intstack_isEmpty(&addrStack)) {
 		entryPoint = intstack_pop(&addrStack);
-		//printf("Popping $%04X...\n", entryPoint);
+		if (_debug) {
+			if (mod->abs_base)
+				printf("Popping offset $%04X (absolute $%04X)...\n", entryPoint, entryPoint + mod->abs_base);
+			else
+				printf("Popping offset $%04X...\n", entryPoint);
+		}
 		mm_setLabel(&map, entryPoint, 1);  // We know this has a label
 		do {
 			flags = M6809_flags(mod, entryPoint);

@@ -29,11 +29,47 @@ void mf_init(MemoryFile* file, int fileSize, char *id) {
 	memset(file->storage, 0, (size_t)(fileSize*sizeof(unsigned char)));
 	file->length = fileSize;
 	file->end = file->storage + fileSize - 1;
+	file->abs_base = 0;
+}
+
+void mf_set_base(MemoryFile* file, unsigned base) {
+	file->abs_base = base;
+}
+
+int mf_get_byte(MemoryFile* file, int offset) {
+	if ( offset >= 0 && offset < file->length)
+		return file->storage[offset];
+	fprintf(stderr, "ERROR: mf_get_byte: Offset '0x%04X' out of range.\n", offset);
+	return 0;
 }
 
 int mf_get_word(MemoryFile* file, int offset) {
-	if ( offset < file->length-1)
-		return ((file->storage[offset]<<8) | file->storage[offset+1]);
+	if ( offset >= 0 && offset < file->length-1)
+		return	((file->storage[offset+0]<<8) |
+			 (file->storage[offset+1]));
 	fprintf(stderr, "ERROR: mf_get_word: Offset '0x%04X' out of range.\n", offset);
 	return 0;
 }
+
+long mf_get_dword(MemoryFile* file, int offset) {
+	if ( offset >= 0 && offset < file->length-3)
+		return	((file->storage[offset+0]<<24) |
+			 (file->storage[offset+1]<<16) |
+			 (file->storage[offset+2]<<8)  |
+			 (file->storage[offset+3]));
+	fprintf(stderr, "ERROR: mf_get_dword: Offset '0x%04X' out of range.\n", offset);
+	return 0;
+}
+
+int mf_get_abs_byte(MemoryFile* file, int address) {
+	return mf_get_byte(file, address - file->abs_base);
+}
+
+int mf_get_abs_word(MemoryFile* file, int address) {
+	return mf_get_word(file, address - file->abs_base);
+}
+
+long mf_get_abs_dword(MemoryFile* file, int address) {
+	return mf_get_dword(file, address - file->abs_base);
+}
+
