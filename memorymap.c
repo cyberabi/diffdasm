@@ -24,6 +24,11 @@ void mm_init(MemoryMap* map, int mapSize, char *id) {
 	memset(map->storage, MM_UNKNOWN, (size_t)(mapSize*sizeof(unsigned char)));
 	map->maxElements = mapSize;
 	map->end = map->storage + mapSize - 1;
+    map->abs_base = 0;
+}
+
+void mm_set_base(MemoryMap* map, unsigned base) {
+    map->abs_base = base;
 }
 
 unsigned char mm_type(MemoryMap* map, int offset) {

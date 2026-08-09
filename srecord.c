@@ -19,6 +19,7 @@
 #include "srecord.h"
 
 extern MemoryFile input;
+extern MemoryMap map;
 extern IntStack addrStack;	// Stack of known-good execution addresses
 extern int _debug;		// Non-zero to print debug information
 
@@ -38,7 +39,6 @@ int loadMHXFile(char* fName) {
 	unsigned	pairs, address, consumed;
 	unsigned	csum;
 	int		matches;
-	int		loadOffset;
 
 	if (_debug) printf("loadMHXFile(%s)...\n", fName);
 
@@ -78,7 +78,7 @@ int loadMHXFile(char* fName) {
 					// Update the checksum
 					unsigned parsedByte;
 					char* parsePtr = lineBuffer + consumed;
-					unsigned char *loadPtr = input.storage + address + loadOffset;
+					unsigned char *loadPtr = input.storage + address - lowAddress;
 					for (int i=0; i<dataBytes; i++) {
 						sscanf(parsePtr, "%02X", &parsedByte);
 						csum += parsedByte;
@@ -106,7 +106,6 @@ int loadMHXFile(char* fName) {
 			printf("Low address:  0x%04X\n", lowAddress);
 			printf("High address: 0x%04X\n", highAddress);
 			printf("Exec address: 0x%04X\n", execAddress);
-			loadOffset = -lowAddress;
 			moduleLength = highAddress - lowAddress + 1;
 			// Try to allocate memory for module(s)
 			if (_debug) printf("loadMHXFile(%s): allocating $%04X bytes for map\n", fName, (int)moduleLength);
@@ -116,7 +115,11 @@ int loadMHXFile(char* fName) {
 			rewind(fp1);
 		} else {
 			fclose(fp1);
-			if (_debug) printf("loadMHXFile(%s): loaded $%04X bytes\n", fName, (int)moduleLength);
+            // Try to allocate memory for map
+            if (_debug) printf("loadMHXFile(%s): allocating $%04X bytes for map\n", fName, (int)moduleLength);
+            mm_init(&map, moduleLength, fName);
+            mm_set_base(&map, lowAddress);
+            if (_debug) printf("loadMHXFile(%s): loaded $%04X bytes\n", fName, (int)moduleLength);
 			return execAddress;
 		}
 	}

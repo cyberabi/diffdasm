@@ -21,6 +21,9 @@ extern int source; // Non-zero to disassemble in source format
 extern int f9info; // Non-zero to output only code / data map info for f9dasm
 extern int _debug; // Non-zero to print debug information
 
+extern int is_os9;
+extern int swipb, swi2pb, swi3pb;
+
 Instruction page00[] =
 {
 	// 00
@@ -829,27 +832,70 @@ Instruction page11[] =
 
 // Indexed addressing mode from lower 5 bits of postbyte
 short pb6809[] = {
+        // 000xx
     POSTINC_1,	POSTINC_2,	PREDEC_1,	PREDEC_2,
-	OFFSET_0,	OFFSET_B,	OFFSET_A,	IDXINVALID,
-	OFFSET_8,	OFFSET_16,	IDXINVALID,	OFFSET_D,
-	PCR_8,		PCR_16,		IDXINVALID,	IDXINVALID,
-	IDXINVALID,	IPOSTINC_2,	IDXINVALID,	IPREDEC_2,
-	IOFFSET_0,	IOFFSET_B,	IOFFSET_A,	IOFFSET_D,
-	IPCR_8,		IPCR_16,	IDXINVALID,	IDXINVALID
+        // 001xx
+	OFFSET_0,	OFFSET_B,	OFFSET_A,	OFFSET_E,
+        // 010xx
+	OFFSET_8,	OFFSET_16,	OFFSET_F,	OFFSET_D,
+        // 011xx
+	PCR_8,		PCR_16,	OFFSET_W,	IDXINVALID,
+        // 100xx
+	IDXINVALID,IPOSTINC_2,IDXINVALID,IPREDEC_2,
+        // 101xx
+	IOFFSET_0,	IOFFSET_B,	IOFFSET_A,	IOFFSET_E,
+        // 110xx
+    IOFFSET_8,	IOFFSET_16,IOFFSET_F,IOFFSET_D,
+        // 111xx
+	IPCR_8,	IPCR_16,	IOFFSET_W,	IEXTENDED
 };
 
-// Extra instruction bytes from indexed addressing mode
+// Extra instruction bytes from indexed addressing mode code
 // Works for 6809 and 6309
 short idxExtra[] = {
-    // OFFSET_0, OFFSET_5, OFFSET_8, OFFSET_16, OFFSET_A, OFFSET_B, OFFSET_D, OFFSET_E	7
-    0,	0,	1,	2,	0,	0,	0,	0,
-    // OFFSET_F, OFFSET_W, POSTINC_1, POSTINC_2, PREDEC_1, PREDEC_2	13, PCR_8, PCR_16
-	0,	0,	0,	0,	0,	0,	1,	2,
-	// IOFFSET_0, IOFFSET_8, IOFFSET_16, IOFFSET_A, IOFFSET_B, IOFFSET_D, IOFFSET_E, IOFFSET_F
-	0,	1,	2,	0,	0,	0,	0,	0,
-	// IOFFSET_W, IPOSTINC_2, IPREDEC_2, IPCR_8, IPCR_16, IEXTENDED, IDXINVALID
-	0,	0,	0,	1,	2,	2,	-1
+    // OFFSET_0,    OFFSET_5,   OFFSET_8,   OFFSET_16,  OFFSET_A,   OFFSET_B,   OFFSET_D,   OFFSET_E
+    0,      0,	    1,	    2,	    0,	    0,	    0,      0,
+    // OFFSET_F,    OFFSET_W,   POSTINC_1,  POSTINC_2,  PREDEC_1,   PREDEC_2,   PCR_8,      PCR_16
+	0,      0,      0,      0,      0,      0,  1,      2,
+	// IOFFSET_0,   IOFFSET_8,  IOFFSET_16, IOFFSET_A,  IOFFSET_B,  IOFFSET_D,  IOFFSET_E,  IOFFSET_F
+	0,      1,      2,      0,      0,      0,      0,  0,
+	// IOFFSET_W,   IPOSTINC_2, IPREDEC_2,  IPCR_8,     IPCR_16,    IEXTENDED,  IDXINVALID
+	0,      0,      0,      1,      2,      2,      -1
 };
+#define OFFSET_0	0x20
+#define OFFSET_5	0x21
+#define OFFSET_8	0x22
+#define OFFSET_16	0x23
+#define OFFSET_A	0x24
+#define OFFSET_B	0x25
+#define OFFSET_D	0x26
+#define OFFSET_E	0x27
+
+#define OFFSET_F	0x28
+#define OFFSET_W	0x29
+#define POSTINC_1	0x2A
+#define POSTINC_2	0x2B
+#define PREDEC_1	0x2C
+#define PREDEC_2	0x2D
+#define PCR_8		0x2E
+#define PCR_16		0x2F
+
+#define IOFFSET_0	0x30
+#define IOFFSET_8	0x31
+#define IOFFSET_16	0x32
+#define IOFFSET_A	0x33
+#define IOFFSET_B	0x34
+#define IOFFSET_D	0x35
+#define IOFFSET_E	0x36
+#define IOFFSET_F	0x37
+
+#define IOFFSET_W	0x38
+#define IPOSTINC_2	0x39
+#define IPREDEC_2	0x3A
+#define IPCR_8		0x3B
+#define IPCR_16		0x3C
+#define IEXTENDED	0x3D
+#define IDXINVALID	0x3E
 
 short M6809_pbIndexMode(MemoryFile* mod, int offset) {
 	// Note: offset points to known index postbyte
@@ -892,8 +938,11 @@ short M6809_bytes10(MemoryFile* mod, int offset) {
 				break;
 		}
 		if (mod->storage[offset] == SWI2_2) {
-			// in OS9. SWI2 is followed by a postbyte
-			++baseBytes;
+			// In OS9 SWI2 is followed by a postbyte
+            // Note that for OS9 this is disassemled as OS9 callID
+            // but on other systems they show up as FCB on the
+            // following line and a push of the subsequent address.
+			baseBytes += swi2pb;
 		}
 	} else {
 		// Not a valid 6809 opcode
@@ -920,7 +969,13 @@ short M6809_bytes11(MemoryFile* mod, int offset) {
 			default:
 				break;
 		}
-	} else {
+        if (mod->storage[offset] == SWI3_2) {
+            // SWI3 may be followed by some number of postbytes but
+            // they show up as FCB on the following line and a push
+            // of the subsequent address.
+            baseBytes += swi3pb;
+        }
+    } else {
 		// Not a valid 6809 opcode
 		baseBytes = 1;
 	}
@@ -961,6 +1016,12 @@ short M6809_bytes(MemoryFile* mod, int offset) {
 			default:
 				break;
 		}
+        if (mod->storage[offset] == SWI_1) {
+            // SWI may be followed by some number of postbytes but
+            // they show up as FCB on the following line and a push
+            // of the subsequent address.
+            baseBytes += swipb;
+        }
 	} else {
 		// Not a valid 6809 opcode
 		baseBytes = 1;
@@ -1142,7 +1203,7 @@ int M6809_pcrel(MemoryFile* mod, int offset) {
 static char labelBuf[16];
 char* M6809_label(MemoryMap* map, int offset) {
 	if (mm_isLabel(map, offset)) {
-		sprintf(labelBuf, "L%04X", offset);
+		sprintf(labelBuf, "L%04X", (offset + map->abs_base) & 0xFFFF);
 		return labelBuf;
 	}
 	return NULL;
@@ -1152,7 +1213,7 @@ char* M6809_label(MemoryMap* map, int offset) {
 char* M6809_labelUnbounded(MemoryMap* map, int offset) {
 	char *rv = M6809_label(map, offset);
 	if (!rv) {
-		sprintf(labelBuf, "X%04X", offset);
+		sprintf(labelBuf, "X%04X", (offset + map->abs_base) & 0xFFFF);
 		rv = labelBuf;
 	}
 	return rv;
@@ -1253,6 +1314,19 @@ char* M6809_indir2(char *p, int mode) {
 	return p;
 }
 
+void append_postbytes(char* buffer, MemoryFile* mod, MemoryMap* map, int offset, int count) {
+    *buffer = 0;
+    for (int delta = 1; delta <= count; delta++) {
+        sprintf(buffer, "#$%02X", mf_get_byte(mod, offset + delta));
+        // TODO: set these bytes as FDB in the map
+        buffer += 4;
+        if (delta != count) {
+            *buffer++ = ',';
+            *buffer = 0;
+        }
+    }
+}
+
 char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) {
 	int postbyte, v, i, eff;
 	int mode = M6809_mode(mod, offset);
@@ -1266,10 +1340,21 @@ char* M6809_operands(char* buffer, MemoryFile* mod, MemoryMap* map, int offset) 
 			sprintf(p, "<$%02X", mod->storage[offset+length-1]);
 			break;
 		case	INHERENT:
-			if ((mod->storage[offset+0] == SWI2_1) && (mod->storage[offset+1] == SWI2_2)) {
-				// OS9 system call has pseudo-operand
-				sprintf(p, "%s", OS9_svcName(mod, offset));
-			}
+			if (mod->storage[offset+0] == SWI_1) {
+				// Display postbytes if needed
+                append_postbytes(p, mod, map, offset, swipb);
+			} else if ((mod->storage[offset+0] == SWI2_1) && (mod->storage[offset+1] == SWI2_2)) {
+                if (is_os9) {
+                    // OS9 system call has pseudo-operand
+                    sprintf(p, "%s", OS9_svcName(mod, offset));
+                } else {
+                    // Display postbytes if needed
+                    append_postbytes(p, mod, map, offset, swipb);
+                }
+            } else if ((mod->storage[offset+0] == SWI3_1) && (mod->storage[offset+1] == SWI3_2)) {
+                // Display postbytes if needed
+                append_postbytes(p, mod, map, offset, swipb);
+            }
 			break;
 		case	REL_8:
 			if (source) {

@@ -50,15 +50,22 @@ int f9info = 0; // Non-zero to output only code / data map info for f9dasm
 int ioflag = 0; // Non-zero to call out potential references to (Color Computer) I/O
 int _debug = 0; // Non-zero to print debug information
 
+int swipb = 1;  // Number of data bytes to skip after an SWI
+int swi2pb = 1; // Number of data bytes to skip after an SWI2
+int swi3pb = 1; // Number of data bytes to skip after an SWI3
+
+int is_os9 = 0; // Set non-zero if we detect OS9 modules
+
 void usage() {
 	fflush(stderr);
 	printf("Usage:\ndiffdasm <options> <module>\nDisassemble 6809 OS9 module or ROM image to a diffable format.\nInput must be a binary module or in .s19 / .mhx format.\n\n");
-	printf("Options:\n--base xxxx Specifies a hex base address (defaults to zero)\n");
-	printf("--exec xxxx Specifies a hex execution address. Can use multiple times.\n");
-	printf("--source Output in assembler source format rather than diff format.\n");
-	printf("--f9info Output in f9dasm info file format rather than diff format.\n");
-	printf("--ioflag Call out potential references to (Color Computer) I/O.\n");
-	printf("--debug  Output debugging information.\n");
+	printf("Options:\n--base xxxx   Specifies a hex base address (defaults to zero)\n");
+	printf("--exec xxxx   Specifies a hex execution address. Can use multiple times.\n");
+	printf("--source      Output in assembler source format rather than diff format.\n");
+	printf("--f9info      Output in f9dasm info file format rather than diff format.\n");
+    printf("--ioflag      Call out potential references to (Color Computer) I/O.\n");
+	printf("--swipb 1,1,1 Set the number of data bytes to skip after SWI, SWI2, SWI3.\n");
+	printf("--debug       Output debugging information.\n");
     exit(1);
 }
 
@@ -98,9 +105,18 @@ void processArgs(int argc, char **argv) {
 		} else if (!strcmp(*argv,"--f9info")) {
 			// Flag that we want f9dasm info output
 			f9info = 1;
-		} else if (!strcmp(*argv,"--ioflag")) {
-			// Flag that we want IO addresses commented
-			ioflag = 1;
+        } else if (!strcmp(*argv,"--ioflag")) {
+            // Flag that we want IO addresses commented
+            ioflag = 1;
+		} else if (!strcmp(*argv,"--swipb")) {
+			// Flag to change bytes to skip after software interrupts.
+            // NOTE: defaults are 1, 1, 1
+            if ( argc < 2) {
+                fprintf(stderr, "ERROR: --swipb requires argument\n");
+                usage();
+            }
+            ++argv, --argc;
+            sscanf(*argv, "%d,%d,%d", &swipb, &swi2pb, &swi3pb);
 		} else if (!strcmp(*argv,"--debug")) {
 			// Flag that we want debug output
 			_debug = 1;
@@ -140,6 +156,7 @@ int loadBinaryFile(char* fName) {
 	// Try to allocate memory for map
 	if (_debug) printf("loadBinaryFile(%s): allocating $%04X bytes for map\n", fName, (int)moduleLength);
 	mm_init(&map, moduleLength, fName);
+    mm_set_base(&map, baseAddr);
 
 	if (_debug) printf("loadBinaryFile(%s): loaded $%04X bytes\n", fName, (int)moduleLength);
 	return 0;
@@ -220,7 +237,8 @@ void inferEntry(MemoryFile *mod) {
 			int modSize = getAddrInd(mod, offset+2, 0);
 			int nameStart = getAddrInd(mod, offset+4, 0);
 			char* moduleName = stringAt(mod, offset+nameStart);
-			//printf("Found module: '%s' ($%04X bytes)\n", moduleName, modSize);
+			if (_debug) printf("Found module: '%s' ($%04X bytes)\n", moduleName, modSize);
+            is_os9 = 1; // Flag this as an OS9 disassembly
 			mm_setFDB(&map, offset+0, 6); // Sync, size, name
 			mm_set(&map, offset+6, MM_FCB, 3); // TYLA, ATRV, parity
 			mm_setString(&map, offset+nameStart, strlen(moduleName));
@@ -295,7 +313,7 @@ void inferEntry(MemoryFile *mod) {
 			int vecAddress = mf_get_abs_word(mod, a);
 			if (_debug) printf("inferEntry: Known address [%04X] = %04X\n", a, vecAddress);
 			// Both of these data structures work in offsets
-			mm_setFDB(&map, a - mod->abs_base, 1); // exec, storage
+			mm_setFDB(&map, a - mod->abs_base, 2); // exec, storage
 			intstack_push(&addrStack, vecAddress - mod->abs_base);
 		}
 	}

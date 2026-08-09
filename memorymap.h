@@ -9,6 +9,7 @@
 #define MEMORYMAP_H_
 
 typedef struct MemoryMap {
+  unsigned abs_base;
   unsigned char *storage;
   unsigned char *end;  // Last byte of storage
   int maxElements;
@@ -34,6 +35,9 @@ typedef struct MemoryMap {
 
 // Initialize a memory map
 void mm_init(MemoryMap* map, int mapSize, char *id);
+
+// Set the base address of a memory map
+void mm_set_base(MemoryMap* map, unsigned base);
 
 // Return the type of the byte at a given position in a map
 unsigned char mm_type(MemoryMap* map, int offset);

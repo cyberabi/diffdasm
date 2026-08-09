@@ -11,8 +11,14 @@
 #define SYNC_1	0x87
 #define SYNC_2	0xCD
 
+#define SWI_1   0x3F
+
 #define SWI2_1	0x10
 #define SWI2_2	0x3F
+
+#define SWI3_1	0x11
+#define SWI3_2	0x3F
+
 
 /*
 * Module Type Values
