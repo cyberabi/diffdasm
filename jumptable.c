@@ -24,7 +24,7 @@ extern int _debug;		// Non-zero to print debug information
 
 extern void usage();
 
-/* Every EVEN address in the range is the start of a 2-byte table entry */
+/* Every EVEN delta in the range is the start of a 2-byte table entry */
 void jt_worker(MemoryFile *mod, unsigned start, unsigned end, int mapType) {
 	int count;
 
@@ -32,13 +32,14 @@ void jt_worker(MemoryFile *mod, unsigned start, unsigned end, int mapType) {
     if (start < 0 || start >= mod->length) return;
     if (end < 0 || end >= mod->length) return;
 
-	if (!(end & 1)) ++end;
-    count = (end - start + 1) / 2;
+    mm_setLabel(&map, start, 1);
+    
+    count = (end - start) / 2 + 1;
     if (_debug) printf("jumptable: Processing %d entries at $%04X...\n", count, start + mod->abs_base);
     if (count) {
         // Each entry in the table will be a specialized FDB
         unsigned at = start;
-        unsigned effectiveAddr;
+        unsigned effectiveAddr = 0;
         while (at >= 0 && at < mod->length && count) {
             unsigned address = mf_get_word(mod, at) & 0xFFFF;
             switch (mapType) {
@@ -59,6 +60,7 @@ void jt_worker(MemoryFile *mod, unsigned start, unsigned end, int mapType) {
             intstack_push(&addrStack, effectiveAddr);
             mm_setjtFDB(&map, at, 2, mapType);
             at += 2;
+            --count;
         }
     }
 }
@@ -76,4 +78,33 @@ void jt_pic(MemoryFile *mod, unsigned start, unsigned end) {
 /* Process jumptable of PIC addresses relative to base of table */
 void jt_pic_relative(MemoryFile *mod, unsigned start, unsigned end) {
     jt_worker(mod, start, end, MAPTYPE_REL);
+}
+
+/* Process jumptable of LBRA instructions (e.g. in OS9 module) */
+void jt_lbra(MemoryFile *mod, unsigned start, unsigned end) {
+    int count;
+
+    if (end < start) return;
+    if (start < 0 || start >= mod->length) return;
+    if (end < 0 || end >= mod->length) return;
+
+    mm_setLabel(&map, start, 1);
+    
+    /* Every THIRD delta in the range is the start of a 3-byte (offset by 1) table entry */
+    count = (end - start) / 3 + 1;
+    if (_debug) printf("jt_lbra: Processing %d entries at $%04X...\n", count, start + mod->abs_base);
+    if (count) {
+        // Each entry in the table will be a specialized FDB
+        unsigned at = start + 1;
+        unsigned effectiveAddr;
+        while (at >= 0 && at < mod->length && count) {
+            unsigned address = mf_get_word(mod, at) & 0xFFFF;
+            effectiveAddr = (address + at + 2) & 0xFFFF;
+            if (_debug) printf("jt_lbra: Known address [$%04X] = $%04X\n", at + mod->abs_base, effectiveAddr + mod->abs_base);
+            intstack_push(&addrStack, effectiveAddr);
+            mm_setCode(&map, at-1, 3);
+            at += 3;
+            --count;
+        }
+    }
 }

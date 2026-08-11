@@ -281,7 +281,7 @@ void inferEntry(MemoryFile *mod) {
 	// Check for concatenation of OS9 modules
 	//
 	if (_debug) printf("inferEntry: checking for OS9 modules.\n");
-	int offset = 0;
+	int offset = 0, addr;
 	while (offset < mod->length) {
 		// An executable OS9 module has at least a 12-byte module header and a 3-byte CRC
 		if (mod->length - offset >= 12 &&
@@ -312,33 +312,26 @@ void inferEntry(MemoryFile *mod) {
 						//printf("Processing Executable Module: '%s'\n", moduleName);
 						mm_setFDB(&map, offset+9, 4); // exec, storage
 						pushAddrInd(mod, offset, 9, 0); // Single entry address
+                        // Jump table: Single entry address
+                        addr = mf_get_word(mod, offset+9);
+                        jt_lbra(mod, addr, addr+3-1);
 						break;
 					case MT_FLMGR: // File Manager
 						//printf("Processing File Manager: '%s'\n", moduleName);
 						mm_setFDB(&map, offset+9, 4); // exec, storage
-						pushAddrInd(mod, offset, 9, 0); // Create
-						pushAddrInd(mod, offset, 9, 3); // Open
-						pushAddrInd(mod, offset, 9, 6); // MakDir
-						pushAddrInd(mod, offset, 9, 9); // ChgDir
-						pushAddrInd(mod, offset, 9, 12); // Delete
-						pushAddrInd(mod, offset, 9, 15); // Seek
-						pushAddrInd(mod, offset, 9, 18); // Read
-						pushAddrInd(mod, offset, 9, 21); // Write
-						pushAddrInd(mod, offset, 9, 24); // ReadLn
-						pushAddrInd(mod, offset, 9, 27); // WriteLn
-						pushAddrInd(mod, offset, 9, 30); // GetStt
-						pushAddrInd(mod, offset, 9, 33); // SetStt
-						pushAddrInd(mod, offset, 9, 36); // Close
+                        // Jump table:
+                        // Create, Open, MakDir, ChgDir, Delete, Seek, Read, Write
+                        // ReadLn, WriteLn, GetStt, SetStt, Close
+                        addr = mf_get_word(mod, offset+9);
+                        jt_lbra(mod, addr, addr+3*13-1);
 						break;
 					case MT_DRIVR: // Device Driver
 						//printf("Processing Device Driver: '%s'\n", moduleName);
 						mm_setFDB(&map, offset+9, 4); // exec, storage
-						pushAddrInd(mod, offset, 9, 0); // Init
-						pushAddrInd(mod, offset, 9, 3); // Read
-						pushAddrInd(mod, offset, 9, 6); // Write
-						pushAddrInd(mod, offset, 9, 9); // GetStt
-						pushAddrInd(mod, offset, 9, 12); // SetStt
-						pushAddrInd(mod, offset, 9, 15); // Term
+                        // Jump table:
+                        // Init, Read, Write, GetStt, SetStt, Term
+                        addr = mf_get_word(mod, offset+9);
+                        jt_lbra(mod, addr, addr+3*6-1);
 						break;
 					default:
 						// There's no execution entry point for these types
