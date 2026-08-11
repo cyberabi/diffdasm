@@ -20,13 +20,15 @@ Disassemble 6809 OS9 module or ROM image to a diffable format.
 Input must be a binary module or in .s19 / .mhx format.
 
 Options:
---base xxxx   Specifies a hex base address (defaults to zero)
---exec xxxx   Specifies a hex execution address. Can use multiple times.
---source      Output in assembler source format rather than diff format.
---f9info      Output in f9dasm info file format rather than diff format.
---ioflag      Call out potential references to (Color Computer) I/O.
---swipb 1,1,1 Set the number of data bytes to skip after SWI, SWI2, SWI3.
---debug       Output debugging information.
+--base xxxx            Specifies a hex base address (defaults to zero)
+--exec xxxx            Specifies a hex execution address. Can use multiple times.
+--notcode xxxx[-yyyy]  Specifies an address or range that must not be disassembled as code.
+--spec                 Speculate about additional execution addresses by parsing for instructions.
+--source               Output in assembler source format rather than diff format.
+--f9info               Output in f9dasm info file format rather than diff format.
+--ioflag               Call out potential references to (Color Computer) I/O.
+--swipb 1,1,1          Set the number of data bytes to skip after SWI, SWI2, SWI3.
+--debug                Output debugging information.
 ```
 
 License:
