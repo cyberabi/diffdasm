@@ -27,4 +27,6 @@ int mf_get_abs_word(MemoryFile* file, int address);
 int mf_get_abs_byte(MemoryFile* file, int address);
 long mf_get_abs_dword(MemoryFile* file, int address);
 
+int mf_checksum(MemoryFile* file);
+
 #endif /* MEMORYFILE_H_ */

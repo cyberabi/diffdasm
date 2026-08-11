@@ -196,6 +196,7 @@ Instruction page00[] =
 	{"JSR",NULL,DIRECT,2,(TRANSFER|HAS_6809|HAS_6309)},
 	{"LDX",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
 	{"STX",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+    // A0
 	{"SUBA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"CMPA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"SBCA",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
@@ -212,6 +213,7 @@ Instruction page00[] =
 	{"JSR",NULL,INDEXED,2,(TRANSFER|HAS_6809|HAS_6309)},
 	{"LDX",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"STX",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+    // B0
 	{"SUBA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
 	{"CMPA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
 	{"SBCA",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
@@ -228,6 +230,7 @@ Instruction page00[] =
 	{"JSR",NULL,EXTENDED,3,(TRANSFER|HAS_6809|HAS_6309)},
 	{"LDX",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
 	{"STX",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
+    // C0
 	{"SUBB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
 	{"CMPB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
 	{"SBCB",NULL,IMMED_8,2,(HAS_6809|HAS_6309)},
@@ -244,6 +247,7 @@ Instruction page00[] =
 	{"LDQ",NULL,IMMED_32,5,HAS_6309},
 	{"LDU",NULL,IMMED_16,3,(HAS_6809|HAS_6309)},
 	{"",NULL,INVALID,1,NEITHER},
+    // D0
 	{"SUBB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
 	{"CMPB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
 	{"SBCB",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
@@ -260,6 +264,7 @@ Instruction page00[] =
 	{"STD",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
 	{"LDU",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
 	{"STU",NULL,DIRECT,2,(HAS_6809|HAS_6309)},
+    // E0
 	{"SUBB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"CMPB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"SBCB",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
@@ -276,6 +281,7 @@ Instruction page00[] =
 	{"STD",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"LDU",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
 	{"STU",NULL,INDEXED,2,(HAS_6809|HAS_6309)},
+    // F0
 	{"SUBB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
 	{"CMPB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
 	{"SBCB",NULL,EXTENDED,3,(HAS_6809|HAS_6309)},
@@ -1184,14 +1190,14 @@ int M6809_pcrel(MemoryFile* mod, int offset) {
 				length = M6809_bytes(mod, offset);
 				postByte = mod->storage[offset+length-1];
 				if (postByte & 0b10000000) postByte |= (-1 & ~0b01111111); // Sign extend
-				return offset + length + postByte;
+				return (offset + length + postByte) & 0xFFFF;
 			case	REL_16:
 			case	PCR_16:
 			case	IPCR_16:
 				length = M6809_bytes(mod, offset);
 				postByte = M6809_get16(mod, offset+length-2);
 				if (postByte & 0b1000000000000000) postByte |= (-1 & ~0b0111111111111111); // Sign extend
-				return offset + length + postByte;
+				return (offset + length + postByte) & 0xFFFF;
 			default:
 				dest = -1;
 				break;

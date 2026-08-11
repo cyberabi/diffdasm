@@ -21,6 +21,7 @@
 #include "os9stuff.h"
 #include "stats6809.h"
 #include "statsCoCo3.h"
+#include "jumptable.h"
 #include "srecord.h"
 
 #include "diffdasm.h"
@@ -37,17 +38,23 @@ unsigned baseAddr = 0;	// Runtime address of start of module
 MemoryFile input;
 MemoryMap map;
 
+int checksum = 0;   // For deep debugging
+
 IntStack addrStack;	// Stack of known-good execution addresses
 IntStack labelStack;	// Stack of labels (e.g. ,pcr references) that could be execution addresses
+IntStack notCodeStack;  // Stack of addresses that might seem like good execution addresses but aren't
+
 LineList lines[LINEMAX]; // Used to map line numbers to byte ranges
 int lineCount = 0;
 
 char operands[32];	// Disassembly operand buffer
 char comment[STRMAX];	// Disassembly comment buffer
 
-int source = 0; // Non-zero to disassemble in source format
 int f9info = 0; // Non-zero to output only code / data map info for f9dasm
 int ioflag = 0; // Non-zero to call out potential references to (Color Computer) I/O
+int specflag = 0; // Non-zero to enable execution address speculation
+
+int source = 0; // Non-zero to disassemble in source format
 int _debug = 0; // Non-zero to print debug information
 
 int swipb = 1;  // Number of data bytes to skip after an SWI
@@ -59,38 +66,70 @@ int is_os9 = 0; // Set non-zero if we detect OS9 modules
 void usage() {
 	fflush(stderr);
 	printf("Usage:\ndiffdasm <options> <module>\nDisassemble 6809 OS9 module or ROM image to a diffable format.\nInput must be a binary module or in .s19 / .mhx format.\n\n");
-	printf("Options:\n--base xxxx   Specifies a hex base address (defaults to zero)\n");
-	printf("--exec xxxx   Specifies a hex execution address. Can use multiple times.\n");
-	printf("--source      Output in assembler source format rather than diff format.\n");
-	printf("--f9info      Output in f9dasm info file format rather than diff format.\n");
-    printf("--ioflag      Call out potential references to (Color Computer) I/O.\n");
-	printf("--swipb 1,1,1 Set the number of data bytes to skip after SWI, SWI2, SWI3.\n");
-	printf("--debug       Output debugging information.\n");
+    printf("Options:\n");
+
+	printf("--base xxxx            Specifies a hex base address (defaults to zero)\n");
+    printf("--exec xxxx            Specifies a hex execution address. Can use multiple times.\n");
+    printf("--notcode xxxx[-yyyy]  Specifies an address or range that must not be disassembled as code.\n");
+	printf("--spec                 Speculate about additional execution addresses by parsing for instructions.\n");
+
+	printf("--source               Output in assembler source format rather than diff format.\n");
+	printf("--f9info               Output in f9dasm info file format rather than diff format.\n");
+    printf("--ioflag               Call out potential references to (Color Computer) I/O.\n");
+	printf("--swipb 1,1,1          Set the number of data bytes to skip after SWI, SWI2, SWI3.\n");
+	printf("--debug                Output debugging information.\n");
+
     exit(1);
+}
+
+void check_corruption(char* where) {
+    if (_debug && checksum != mf_checksum(&input)) {
+        printf("ERROR(%s): The memory file data has been changed!\n", where);
+        exit(1);
+    }
 }
 
 void init() {
 	intstack_init(&addrStack, STACKLIMIT);
-	intstack_init(&labelStack, STACKLIMIT);
+    intstack_init(&labelStack, STACKLIMIT);
+	intstack_init(&notCodeStack, STACKLIMIT);
 	comment[0] = '\0';
 }
 
 void processArgs(int argc, char **argv) {
-	unsigned address;
+    unsigned address, a2;
+    int matches;
+
+    IntStack tempExec;	    // Stack of potential known-good execution addresses (need to be offset by base)
+    IntStack tempNotCode;	// Stack of potential known-bad execution addresses (need to be offset by base)
+    intstack_init(&tempExec, STACKLIMIT);
+    intstack_init(&tempNotCode, STACKLIMIT);
+
 	if (argc < 2) {
 		fprintf(stderr, "ERROR: input module required\n");
 	    usage();
 	}
 	while (++argv,--argc) {
-		if (!strcmp(*argv,"--exec")) {
-			// Push the specified entry address onto the stack
+        if (!strcmp(*argv,"--exec")) {
+            // Push the specified entry address onto the TEMP stack
+            if (argc < 2) {
+                fprintf(stderr, "ERROR: --exec requires argument\n");
+                usage();
+            }
+            ++argv, --argc;
+            sscanf(*argv, "%x", &address);
+            intstack_push(&tempExec, address);
+        } else if (!strcmp(*argv,"--notcode")) {
+			// Push the specified entry address onto the TEMP stack
 			if ( argc < 2) {
-				fprintf(stderr, "ERROR: --exec requires argument\n");
+				fprintf(stderr, "ERROR: --notcode requires argument\n");
 				usage();
 			}
 			++argv, --argc;
-			sscanf(*argv, "%x", &address);
-			intstack_push(&addrStack, address);
+			matches = sscanf(*argv, "%x-%x", &address, &a2);
+            if (matches == 1) a2 = address;
+            for (int i = address; i <= a2; i++)
+			    intstack_push(&tempNotCode, i);
 		} else if (!strcmp(*argv,"--base")) {
 			// Save the specified base address
 			if ( argc < 2) {
@@ -99,6 +138,9 @@ void processArgs(int argc, char **argv) {
 			}
 			++argv, --argc;
 			sscanf(*argv, "%x", &baseAddr);
+        } else if (!strcmp(*argv,"--spec")) {
+            // Flag that we want speculative disassembly
+            specflag = 1;
 		} else if (!strcmp(*argv,"--source")) {
 			// Flag that we want source output
 			source = 1;
@@ -125,6 +167,19 @@ void processArgs(int argc, char **argv) {
 			inFileName = *argv;
 		}
 	}
+
+    // Postprocess the address stacks relative to --BASE if provided
+
+    for (int i=0; i < tempExec.top; i++)
+        intstack_push(&addrStack, (tempExec.storage[i] - baseAddr) & 0xFFFF);
+    for (int i=0; i < tempNotCode.top; i++)
+        intstack_push(&notCodeStack, (tempNotCode.storage[i] - baseAddr) & 0xFFFF);
+    intstack_destroy(&tempExec);
+    intstack_destroy(&tempNotCode);
+    if (_debug) {
+        intstack_dump(&addrStack, "Known execution offsets");
+        intstack_dump(&notCodeStack, "Known non-code offsets");
+    }
 }
 
 int loadBinaryFile(char* fName) {
@@ -188,7 +243,7 @@ void loadFile(char *fName) {
 	// NOTE: The stack data structure works in offsets.
 	if (exec != 0x0000) {
 		if (_debug) printf("loadFile(%s): Known address: %04X\n", fName, exec);
-		intstack_push(&addrStack, exec - input.abs_base);
+		intstack_push(&addrStack, (exec - input.abs_base) & 0xFFFF);
 	}
 }
 
@@ -301,22 +356,12 @@ void inferEntry(MemoryFile *mod) {
 	//
 	// Check for loaded data that overlaps the 6809 vectors.
 	//
-	// TODO: Generalize this for any absolute jump tables,
-	// and add a command line switch to specify a jump table.
-	//
 	if (_debug) printf("inferEntry: checking for vector page.\n");
 	int baseAddress = mod->abs_base;
 	int endAddress = baseAddress + mod->length - 1;
-	if (_debug) printf("inferEntry: loaded address range is %04X - %04X.\n", baseAddress, endAddress);
-	for (int a = 0xFFF0; a < 0xFFFF; a += 2) {
-		if (a >= baseAddress && a < endAddress) {
-			int vecAddress = mf_get_abs_word(mod, a);
-			if (_debug) printf("inferEntry: Known address [%04X] = %04X\n", a, vecAddress);
-			// Both of these data structures work in offsets
-			mm_setFDB(&map, a - mod->abs_base, 2); // exec, storage
-			intstack_push(&addrStack, vecAddress - mod->abs_base);
-		}
-	}
+	if (_debug) printf("inferEntry: loaded address range is $%04X - $%04X.\n", baseAddress, endAddress);
+    if (endAddress >= 0xFFF0)
+        jt_extended(mod, 0xFFF0 - mod->abs_base, endAddress - mod->abs_base);
 
 	// If no other entry point, start at offset zero
 	if (intstack_isEmpty(&addrStack)) {
@@ -325,12 +370,7 @@ void inferEntry(MemoryFile *mod) {
 }
 
 void dumpStack() {
-	int depth, at;
-	printf("Address Stack:\n");
-	depth = intstack_size(&addrStack);
-	for (at=0; at<depth; at++) {
-		printf("%s$%04X\n", (at==0)?"  -> ":"     ", intstack_probe(&addrStack, at));
-	}
+    intstack_dump(&addrStack, "Address Stack");
 }
 
 void dumpLines() {
@@ -380,6 +420,15 @@ int couldBeString(MemoryFile *mod, int entryPoint) {
 	return offset;
 }
 
+int isNotCode(int entryPoint) {
+    // Returns 1 if this entry point (offset) is on the NotCode list
+    for (int i=0; i<notCodeStack.top; i++) {
+        if (entryPoint == notCodeStack.storage[i])
+            return 1;
+    }
+    return 0;
+}
+
 int couldBeCode(MemoryFile *mod, int entryPoint) {
 	// Here, we speculatively disassemble forward from offset
 	// checking only the linear instruction stream; if it has
@@ -394,6 +443,12 @@ int couldBeCode(MemoryFile *mod, int entryPoint) {
 	unsigned char flags, type;
 	int length, offset = 0;
 	//printf("Speculatively disassembling at $%04X...\n", entryPoint);
+
+    // Make sure speculative disassembly is allowed
+    if (!specflag) return 0;
+    // Make sure it's not on the NotCode list
+    if (isNotCode(entryPoint)) return 0;
+
 	do {
 		flags = M6809_flags(mod, entryPoint + offset);
 		if (flags & HAS_6809) {
@@ -420,6 +475,7 @@ int couldBeCode(MemoryFile *mod, int entryPoint) {
 }
 
 void mapCode(MemoryFile *mod) {
+    int allowed = 1;
 	int entryPoint, length, dest, eff, run;
 	unsigned char flags, type;
 
@@ -432,6 +488,17 @@ void mapCode(MemoryFile *mod) {
 			else
 				printf("Popping offset $%04X...\n", entryPoint);
 		}
+        // Make sure it's not on the NotCode list
+        if (isNotCode(entryPoint)) {
+            if (_debug) {
+                if (mod->abs_base)
+                    printf("IGNORING: Offset $%04X (absolute $%04X) is on the NotCode list.\n", entryPoint, entryPoint + mod->abs_base);
+                else
+                    printf("IGNORING: Offset $%04X is on the NotCode list.\n", entryPoint);
+            }
+            continue;
+        }
+
 		mm_setLabel(&map, entryPoint, 1);  // We know this has a label
 		do {
 			flags = M6809_flags(mod, entryPoint);
@@ -556,10 +623,10 @@ void dumpBytes(MemoryFile *mod, int offset, int length) {
 			if (*io)
 			{
 				int cl = strlen(comment);
-				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+				sprintf(comment+cl, " IOREF $%04X: %s", offset+i, io);
 			}
 		}
-		printf("%c%02X", sep, mod->storage[offset+i]);
+		printf("%c$%02X", sep, mod->storage[offset+i]);
 		sep = ',';
 	}
 	eol();
@@ -577,10 +644,10 @@ void dumpPairs(MemoryFile *mod, int offset, int length) {
 			if (*io)
 			{
 				int cl = strlen(comment);
-				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+				sprintf(comment+cl, " IOREF $%04X: %s", offset+i, io);
 			}
 		}
-		printf("%c%02X%02X", sep, mod->storage[offset+i], mod->storage[offset+i+1]);
+		printf("%c$%02X%02X", sep, mod->storage[offset+i], mod->storage[offset+i+1]);
 		sep = ',';
 	}
 	eol();
@@ -631,10 +698,10 @@ void dumpManyBytes(char* mnemonic, MemoryFile *mod, int offset, int length) {
 			if (*io)
 			{
 				int cl = strlen(comment);
-				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+				sprintf(comment+cl, " IOREF $%04X: %s", offset+i, io);
 			}
 		}
-		printf("%c%02X", sep, mod->storage[offset+i]);
+		printf("%c$%02X", sep, mod->storage[offset+i]);
 		sep = ',';
 	}
 	eol();
@@ -658,10 +725,10 @@ void dumpManyPairs(char* mnemonic, MemoryFile *mod, int offset, int length) {
 			if (*io)
 			{
 				int cl = strlen(comment);
-				sprintf(comment+cl, " IOREF 0x%04X: %s", offset+i, io);
+				sprintf(comment+cl, " IOREF $%04X: %s", offset+i, io);
 			}
 		}
-		printf("%c%02X%02X", sep, mod->storage[offset+i], mod->storage[offset+i+1]);
+		printf("%c$%02X%02X", sep, mod->storage[offset+i], mod->storage[offset+i+1]);
 		sep = ',';
 	}
 	eol();
@@ -669,8 +736,8 @@ void dumpManyPairs(char* mnemonic, MemoryFile *mod, int offset, int length) {
 void disassemble(MemoryFile *mod, MemoryMap *map) {
 	// TODO: map line numbers to eff values
 	int run, length, type;
-	int eff = 0;
-	char *label;
+	int eff = 0, effWord;
+	char *label, *postLabel = NULL;
 	//printf("Disassembling...\n");
 	while (eff < map->maxElements) {
 		type = mm_type(map, eff);
@@ -709,6 +776,26 @@ void disassemble(MemoryFile *mod, MemoryMap *map) {
 					dumpBytes(mod, eff + run - length, 1);
 				}
 				break;
+            case MM_FDB_JTEXT:
+                // NOTE: Assumes run is 2
+                effWord = mf_get_word(mod, eff);
+                postLabel = M6809_labelUnbounded(map, effWord - mod->abs_base);
+                printf(" FDB $%04X", effWord);
+                if (source && postLabel) appendComment(postLabel);
+                eol();
+                break;
+            case MM_FDB_JTPIC:
+                // NOTE: Assumes run is 2
+                effWord = mf_get_word(mod, eff);
+                postLabel = M6809_labelUnbounded(map, (effWord + eff) & 0xFFFF);
+                printf(" FDB $%04X", effWord);
+                if (source && postLabel) appendComment(postLabel);
+                eol();
+                break;
+            case MM_FDB_JTREL:
+                // TODO: Format these specially
+                dumpManyPairs("FDB", mod, eff, run);
+                break;
 			case MM_FCS:
 				// Output as-is
 				printf(" FCS");
@@ -763,7 +850,10 @@ void infogen(MemoryFile *mod) {
 			case MM_FCC:
 				printf("CHAR 0x%04x-0x%04x\n", eff, eff+run-1);
 				break;
-			case MM_FDB:
+            case MM_FDB:
+            case MM_FDB_JTEXT:
+            case MM_FDB_JTPIC:
+			case MM_FDB_JTREL:
 				printf("WORD 0x%04x-0x%04x\n", eff, eff+run-1);
 				break;
 			case MM_CODE1:
@@ -784,6 +874,7 @@ int main(int argc, char **argv) {
 	init();
 	processArgs(argc, argv);
 	loadFile(inFileName);
+    if (_debug) checksum = mf_checksum(&input);
 	inferEntry(&input);
 	//dumpStack();
 	mapCode(&input);
@@ -794,6 +885,9 @@ int main(int argc, char **argv) {
 		disassemble(&input, &map);
 		if (!source) dumpLines();
 	}
+    intstack_destroy(&addrStack);
+    intstack_destroy(&labelStack);
+    intstack_destroy(&notCodeStack);
 	return 0;
 }
 

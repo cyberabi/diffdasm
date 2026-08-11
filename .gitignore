@@ -6,3 +6,5 @@ diffdasm
 assist09-orig.s19
 aciapak.dr
 .idea/
+diffdasm.dSYM/
+diffdasm.xcodeproj/

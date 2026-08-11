@@ -32,41 +32,48 @@ void mm_set_base(MemoryMap* map, unsigned base) {
 }
 
 unsigned char mm_type(MemoryMap* map, int offset) {
-	if (offset < map->maxElements) {
+    // It's OK to call this with an out-of range value; just do nothing.
+    if (offset >= 0 && offset < map->maxElements) {
 		return map->storage[offset] & ~MM_LABEL;
 	}
 	return MM_INVALID;
 }
 
 int mm_isLabel(MemoryMap* map, int offset) {
-	if (offset < map->maxElements) {
+    // It's OK to call this with an out-of range value; just do nothing.
+    if (offset >= 0 && offset < map->maxElements) {
 		return ((map->storage[offset] & MM_LABEL) != 0);
 	}
 	return 0;
 }
 
 void mm_setType(MemoryMap* map, int offset, unsigned char type) {
-	if (offset < map->maxElements) {
+    if (offset >= 0 && offset < map->maxElements) {
 		int labelFlag = map->storage[offset] & MM_LABEL;
 		map->storage[offset] = type | labelFlag;
-	}
+	} else {
+        fprintf(stderr, "ERROR: mm_setLabel: Offset '$%05X' out of range (%d elements)\n", offset, map->maxElements);
+        exit(1);
+    }
 }
 
 void mm_setLabel(MemoryMap* map, int offset, int value) {
-	if (offset < map->maxElements) {
-		if (value != 0) {
-			map->storage[offset] |= MM_LABEL;
-		}
-		else {
-			map->storage[offset] &= ~MM_LABEL;
-		}
-	}
+    // It's OK to call this with an out-of range value; just do nothing.
+    if (offset >= 0 && offset < map->maxElements) {
+        if (value != 0) {
+            map->storage[offset] |= MM_LABEL;
+        }
+        else {
+            map->storage[offset] &= ~MM_LABEL;
+        }
+    }
 }
 
 void _mm_set(MemoryMap* map, int offset, unsigned char type_1, unsigned char type, unsigned char type_n, int count) {
 	//printf("_mm_set $%04X %c %c %c %d\n", offset, type_1, type, type_n, count);
-	if (offset+count > map->maxElements) {
-		fprintf(stderr, "ERROR: _mm_set: Map offset $%05x is beyond the end of the map\n", offset+count);
+	if (offset < 0 || offset+count > map->maxElements) {
+		fprintf(stderr, "ERROR: _mm_set: Map offset '$%05x' is beyond the end of the map\n", offset+count);
+        exit(1);
 	}
 	// Error if these bytes aren't all currently "unknown"
 	unsigned short i;
@@ -79,15 +86,15 @@ void _mm_set(MemoryMap* map, int offset, unsigned char type_1, unsigned char typ
 			t = type_1;
 		}
 		if (((v = mm_type(map, offset)) != MM_UNKNOWN) && (v != t)) {
-			fprintf(stderr, "ERROR: _mm_set: Map offset $%04X has two different data types (%c,%c)\n", offset, t, v);
+			fprintf(stderr, "ERROR: _mm_set: Map offset '$%04X' has two different data types (%c,%c); keeping %c\n", offset, t, v, v);
 		} else {
 			mm_setType(map, offset, t);
 		}
 	} else {
 		for (i=0; i<count; i++) {
 			t = (0 == i) ? type_1 : (((count-1) == i) ? type_n : type);
-			if ((v = mm_type(map, offset+i)) != MM_UNKNOWN) {
-				fprintf(stderr, "ERROR: _mm_set: Offset $%04X has two different data types (%c,%c)\n", offset+i, t, v);
+			if (((v = mm_type(map, offset+i)) != MM_UNKNOWN) && (v != t)) {
+				fprintf(stderr, "ERROR: _mm_set: Offset '$%04X' has two different data types (%c,%c); keeping %c\n", offset+i, t, v, v);
 			}
 			else {
 				mm_setType(map, offset+i, t);
@@ -111,13 +118,32 @@ void mm_setString(MemoryMap* map, int offset, int count) {
 }
 
 void mm_setFDB(MemoryMap* map, int offset, int count) {
+    if (count & 1) {
+        fprintf(stderr, "ERROR: mm_setfdb: Byte count must be even (%d)\n", count);
+    } else {
+        // Set in pairs so we alternate FDB and FDB2
+        int i;
+        for (i=0; i<count; i+=2) {
+            _mm_set(map, offset+i, MM_FDB, MM_FDB, MM_FDB2, 2);
+        }
+    }
+}
+
+void mm_setjtFDB(MemoryMap* map, int offset, int count, int type) {
+
+    static const char typePairs[] = {
+            MM_FDB_JTEXT, MM_FDB_JTEXT2,   // EXT
+            MM_FDB_JTPIC, MM_FDB_JTPIC2,   // PIC
+            MM_FDB_JTREL, MM_FDB_JTREL2    // REL
+    };
+
 	if (count & 1) {
-		fprintf(stderr, "ERROR: mm_setfdb: Byte count must be even (%d)\n", count);
+		fprintf(stderr, "ERROR: mm_setjtfdb: Byte count must be even (%d)\n", count);
 	} else {
-		// Set in pairs so we alternate FDB and FDB2
+		// Set in pairs so we alternate flags
 		int i;
 		for (i=0; i<count; i+=2) {
-			_mm_set(map, offset+i, MM_FDB, MM_FDB, MM_FDB2, 2);
+			_mm_set(map, offset+i, typePairs[type*2+0], typePairs[type*2+0], typePairs[type*2+1], 2);
 		}
 	}
 }
@@ -129,7 +155,7 @@ int mm_runLength(MemoryMap* map, int offset) {
 	int source;
 	unsigned char type_1, type;
 	if (offset >= map->maxElements) {
-		fprintf(stderr, "ERROR: mm_runlength: Map offset $%05X is beyond the end of the map\n", offset);
+		fprintf(stderr, "ERROR: mm_runlength: Map offset '$%05X' is beyond the end of the map\n", offset);
 	}
 	type_1 = mm_type(map, offset);
 	switch (type_1) {
@@ -141,7 +167,7 @@ int mm_runLength(MemoryMap* map, int offset) {
 			// Multi-byte string -- keep going until MM_FCSN
 			while ((type=mm_type(map, (source=offset+count))) == MM_FCS) ++count;
 			if (type != MM_FCSN) {
-				fprintf(stderr, "ERROR: mm_runlength: String at offset $%04X ended with unexpected type (%c)\n", offset, type);
+				fprintf(stderr, "ERROR: mm_runlength: String at offset '$%04X' ended with unexpected type (%c)\n", offset, type);
 			} else {
 				++count;
 			}
@@ -150,6 +176,11 @@ int mm_runLength(MemoryMap* map, int offset) {
 			// Keep going while FDB or FDB2
 			while (((type=mm_type(map, (source=offset+count))) == MM_FDB) || (type == MM_FDB2)) ++count;
 			break;
+        case MM_FDB_JTEXT:
+        case MM_FDB_JTPIC:
+        case MM_FDB_JTREL:
+            count = 2;
+            break;
 		case MM_CODE1:
 		case MM_CODEX:
 			// Start of an instruction; rest of instruction is MM_CODE
@@ -158,12 +189,15 @@ int mm_runLength(MemoryMap* map, int offset) {
 			break;
 		case MM_CODE:
 			// Should never happen
-			fprintf(stderr, "ERROR: mm_runlength: Not on instruction boundary at offset $%04X\n", offset);
+			fprintf(stderr, "ERROR: mm_runlength: Not on instruction boundary at offset '$%04X'\n", offset);
 			count = 1;
 			break;
-		case MM_FDB2:
+        case MM_FDB2:
+        case MM_FDB_JTEXT2:
+        case MM_FDB_JTPIC2:
+		case MM_FDB_JTREL2:
 			// Should never happen
-			fprintf(stderr, "ERROR: mm_runlength: Not on FDB boundary at offset $%04X\n", offset);
+			fprintf(stderr, "ERROR: mm_runlength: Not on FDB boundary at offset '$%04X'\n", offset);
 			count = 1;
 			break;
 		default:

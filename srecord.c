@@ -103,9 +103,9 @@ int loadMHXFile(char* fName) {
 		if (_debug) printf("loadMHXFile(%s): end of S-record loading pass %d...\n", fName, pass);
 		if (pass == 1) {
 			// Stats
-			printf("Low address:  0x%04X\n", lowAddress);
-			printf("High address: 0x%04X\n", highAddress);
-			printf("Exec address: 0x%04X\n", execAddress);
+			printf("Low address:  $%04X\n", lowAddress);
+			printf("High address: $%04X\n", highAddress);
+			printf("Exec address: $%04X\n", execAddress);
 			moduleLength = highAddress - lowAddress + 1;
 			// Try to allocate memory for module(s)
 			if (_debug) printf("loadMHXFile(%s): allocating $%04X bytes for map\n", fName, (int)moduleLength);
@@ -126,6 +126,7 @@ int loadMHXFile(char* fName) {
 
 // Because it's fun to use a goto just to piss people off ;-)
 badformat:
+    fclose(fp1);
 	fprintf(stderr, "loadMHXFile(%s): ERROR: invalid S-record '%s' in '%s'\n", fName, lineBuffer, fName);
 	usage();
 	return 0;

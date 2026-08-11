@@ -31,6 +31,14 @@ typedef struct MemoryMap {
 #define MM_CODEX    'y'
 #define MM_INVALID	'X'
 
+// Extra variants of MM_FDB for clever handling of jump tables
+#define MM_FDB_JTEXT    'E'
+#define MM_FDB_JTEXT2   'e'
+#define MM_FDB_JTPIC      'P'
+#define MM_FDB_JTPIC2     'p'
+#define MM_FDB_JTREL      'R'
+#define MM_FDB_JTREL2     'r'
+
 #define MM_LABEL	0b10000000
 
 // Initialize a memory map
@@ -62,6 +70,9 @@ void mm_setString(MemoryMap* map, int offset, int count);
 
 // Set a range of bytes as FDB; alternate FDB and FDB2
 void mm_setFDB(MemoryMap* map, int offset, int count);
+
+// Set a range of bytes as jumptable FDB; alternate codes based on type
+void mm_setjtFDB(MemoryMap* map, int offset, int count, int type);
 
 // Count the number of map bytes in a "run" of the same type
 int mm_runLength(MemoryMap* map, int offset);

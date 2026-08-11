@@ -72,8 +72,15 @@ unsigned intstack_probe(IntStack *s, int fromTop) {
 }
 
 void intstack_destroy(IntStack *s) {
-  if (s && s->storage) {
-    free(s->storage);
-    s->top = 0;
-  }
+    if (s && s->storage) {
+        free(s->storage);
+        s->top = 0;
+    }
+}
+
+void intstack_dump(IntStack *s, char *label) {
+    printf("%s:\n", label);
+    for (int i=0; i < s->top; i++) {
+        printf( "$%04X\n", intstack_probe(s, i));
+    }
 }

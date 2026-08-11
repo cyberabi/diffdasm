@@ -143,6 +143,7 @@ int M6809_pcrel(MemoryFile* mod, int offset);
 
 // Return the label (if any) of the instruction
 char* M6809_label(MemoryMap* map, int offset);
+char* M6809_labelUnbounded(MemoryMap* map, int offset);
 
 // Return the opcode of the instruction
 char* M6809_opcode(MemoryFile* mod, int offset);

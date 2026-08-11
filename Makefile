@@ -1,6 +1,11 @@
 PROJECT_ROOT = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-OBJS = diffdasm.o intstack.o memorymap.o memoryfile.o srecord.o stats6809.o statsOS9.o statsCoCo3.o
+CC = gcc
+CXX = g++
+
+SYMS = dsymutil
+
+OBJS = diffdasm.o intstack.o memorymap.o memoryfile.o jumptable.o srecord.o stats6809.o statsOS9.o statsCoCo3.o
 
 ifeq ($(BUILD_MODE),debug)
 	CFLAGS += -g
@@ -8,12 +13,14 @@ else ifeq ($(BUILD_MODE),run)
 	CFLAGS += -O2
 else
 #	$(error Build mode $(BUILD_MODE) not supported by this Makefile)
+	CFLAGS += -g
 endif
 
 all:	diffdasm
 
 diffdasm:	$(OBJS)
-	$(CXX) -o $@ $^
+	$(CXX) -g -o $@ $^
+	$(SYMS) diffdasm
 
 %.o:	$(PROJECT_ROOT)%.cpp
 	$(CXX) -c $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS) -o $@ $<

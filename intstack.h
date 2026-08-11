@@ -11,7 +11,7 @@
 #define INTSTACK_H_
 
 typedef struct IntStack {
-  int top;
+  int top;              // Next available for storage
   unsigned *storage;
   int maxElements;
 } IntStack;
@@ -41,5 +41,8 @@ unsigned intstack_probe(IntStack *s, int fromTop);
 
 /* Deallocates the memory allocated to stack */
 void intstack_destroy(IntStack *s);
+
+/* For debugging */
+void intstack_dump(IntStack *s, char *label);
 
 #endif /* INTSTACK_H_ */
